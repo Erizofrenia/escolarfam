@@ -1,4 +1,5 @@
-/*
+
+    /*
     ========================================
     ESTRUCTURA DEL PROYECTO ESCOLARFAM
     ========================================
@@ -1637,6 +1638,7 @@
       let startX = 0;
       let currentTranslate = 0;
       let prevTranslate = 0;
+      let animationID = 0;
       const screenWidth = window.innerWidth;
       const totalScreens = container.children.length;
 
@@ -1645,6 +1647,7 @@
         touchStartX = e.changedTouches[0].screenX;
         startX = touchStartX;
         isDragging = true;
+        animationID = requestAnimationFrame(animation);
         container.style.transition = 'none';
       });
 
@@ -1654,13 +1657,13 @@
         const currentX = e.changedTouches[0].screenX;
         const diff = currentX - startX;
         currentTranslate = prevTranslate + diff;
-        container.style.transform = `translateX(${currentTranslate}px)`;
       });
 
       container.addEventListener('touchend', (e) => {
         touchEndX = e.changedTouches[0].screenX;
         isDragging = false;
-        container.style.transition = 'transform 0.3s ease-out';
+        cancelAnimationFrame(animationID);
+        container.style.transition = 'transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)';
         handleSwipe();
       });
 
@@ -1669,6 +1672,7 @@
         touchStartX = e.clientX;
         startX = touchStartX;
         isDragging = true;
+        animationID = requestAnimationFrame(animation);
         container.style.cursor = 'grabbing';
         container.style.transition = 'none';
         e.preventDefault();
@@ -1680,15 +1684,15 @@
         const currentX = e.clientX;
         const diff = currentX - startX;
         currentTranslate = prevTranslate + diff;
-        container.style.transform = `translateX(${currentTranslate}px)`;
       });
 
       container.addEventListener('mouseup', (e) => {
         if (!isDragging) return;
         touchEndX = e.clientX;
         isDragging = false;
+        cancelAnimationFrame(animationID);
         container.style.cursor = 'grab';
-        container.style.transition = 'transform 0.3s ease-out';
+        container.style.transition = 'transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)';
         handleSwipe();
       });
 
@@ -1696,38 +1700,48 @@
         if (!isDragging) return;
         touchEndX = e.clientX;
         isDragging = false;
+        cancelAnimationFrame(animationID);
         container.style.cursor = 'grab';
-        container.style.transition = 'transform 0.3s ease-out';
+        container.style.transition = 'transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)';
         handleSwipe();
       });
 
       // Set initial cursor
       container.style.cursor = 'grab';
 
-      function handleSwipe() {
-        const swipeThreshold = screenWidth * 0.2; // 20% del ancho de pantalla
-        const diff = touchStartX - touchEndX;
+      function animation() {
+        setSliderPosition();
+        if (isDragging) requestAnimationFrame(animation);
+      }
 
-        if (Math.abs(diff) > swipeThreshold) {
-          if (diff > 0 && currentIndex < totalScreens - 1) {
-            currentIndex++;
-          } else if (diff < 0 && currentIndex > 0) {
-            currentIndex--;
-          }
+      function setSliderPosition() {
+        container.style.transform = `translateX(${currentTranslate}px)`;
+      }
+
+      function handleSwipe() {
+        const movedBy = currentTranslate - prevTranslate;
+        
+        // Si se movió más del 25% del ancho de pantalla, cambiar de pantalla
+        if (movedBy < -screenWidth / 4 && currentIndex < totalScreens - 1) {
+          currentIndex++;
+        } else if (movedBy > screenWidth / 4 && currentIndex > 0) {
+          currentIndex--;
         }
 
-        // Snap to the nearest screen
-        prevTranslate = -currentIndex * screenWidth;
-        currentTranslate = prevTranslate;
-        container.style.transform = `translateX(${currentTranslate}px)`;
+        // Siempre ajustar a la pantalla más cercana
+        setPositionByIndex();
+      }
+
+      function setPositionByIndex() {
+        currentTranslate = currentIndex * -screenWidth;
+        prevTranslate = currentTranslate;
+        setSliderPosition();
       }
 
       // Centrar en la pantalla del gafete (pantalla del medio para admin/maestro)
       if (currentRole === 'admin' || currentRole === 'maestro') {
         currentIndex = 1; // Centrar en la segunda pantalla (gafete)
-        prevTranslate = -currentIndex * screenWidth;
-        currentTranslate = prevTranslate;
-        container.style.transform = `translateX(${currentTranslate}px)`;
+        setPositionByIndex();
       }
     }
 
@@ -3094,8 +3108,198 @@
       }
     });
 
-    function attachHeaderListeners() {
+    // Variables globales para el login
+    let isLoggedIn = false;
+    let currentUser = null;
+
+    // Funciones del sistema de login
+    function togglePassword() {
+      const passwordInput = document.getElementById('password');
+      const toggleBtn = document.querySelector('.password-toggle i');
+      
+      if (passwordInput.type === 'password') {
+        passwordInput.type = 'text';
+        toggleBtn.className = 'fas fa-eye-slash';
+      } else {
+        passwordInput.type = 'password';
+        toggleBtn.className = 'fas fa-eye';
+      }
+    }
+
+    function showForgotPassword() {
+      document.getElementById('forgotModal').classList.add('show');
+    }
+
+    function closeForgotModal() {
+      document.getElementById('forgotModal').classList.remove('show');
+    }
+
+    function sendRecoveryEmail() {
+      const email = document.getElementById('recoveryEmail').value;
+      if (email) {
+        showToast('📧 Instrucciones enviadas a tu correo electrónico', 'success');
+        closeForgotModal();
+      } else {
+        showToast('Por favor ingresa tu correo electrónico', 'error');
+      }
+    }
+
+    function showInfoModal() {
+      document.getElementById('infoModal').classList.add('show');
+    }
+
+    function closeInfoModal() {
+      document.getElementById('infoModal').classList.remove('show');
+    }
+
+    function handleLogin(event) {
+      event.preventDefault();
+      
+      const username = document.getElementById('username').value;
+      const password = document.getElementById('password').value;
+      const rememberMe = document.getElementById('rememberMe').checked;
+      
+      if (!username || !password) {
+        showToast('Por favor completa todos los campos', 'error');
+        return;
+      }
+
+      // Simular validación de credenciales
+      const validCredentials = {
+        'alumno': 'alumno123',
+        'padre': 'padre123',
+        'maestro': 'maestro123',
+        'admin': 'admin123',
+        'director': 'director123'
+      };
+
+      let userRole = null;
+      for (const [role, pass] of Object.entries(validCredentials)) {
+        if (username.toLowerCase() === role && password === pass) {
+          userRole = role;
+          break;
+        }
+      }
+
+      if (userRole) {
+        // Login exitoso
+        showToast('✅ Inicio de sesión exitoso', 'success');
+        
+        // Guardar datos del usuario
+        currentUser = {
+          username: username,
+          role: userRole,
+          rememberMe: rememberMe
+        };
+        
+        // Si "No cerrar sesión" está marcado, guardar en localStorage
+        if (rememberMe) {
+          localStorage.setItem('escolarfam_user', JSON.stringify(currentUser));
+        }
+        
+        // Ocultar pantalla de login y mostrar aplicación
+        setTimeout(() => {
+          document.getElementById('loginScreen').style.display = 'none';
+          document.getElementById('appContainer').style.display = 'flex';
+          
+          // Configurar el rol en la aplicación
+          currentRole = userRole === 'director' ? 'admin' : userRole;
+          document.getElementById('roleSelector').value = currentRole;
+          
+          // Inicializar la aplicación
+          isLoggedIn = true;
+          showRegisterButton();
+          updateNavigation();
+          renderScreens();
+          attachAppHeaderListeners();
+        }, 1000);
+        
+      } else {
+        // Login fallido
+        showToast('❌ Usuario o contraseña incorrectos', 'error');
+        
+        // Limpiar campos
+        document.getElementById('password').value = '';
+        document.getElementById('username').focus();
+      }
+    }
+
+    function logout() {
+      // Limpiar datos guardados
+      localStorage.removeItem('escolarfam_user');
+      
+      // Resetear variables
+      isLoggedIn = false;
+      currentUser = null;
+      
+      // Mostrar pantalla de login
+      document.getElementById('appContainer').style.display = 'none';
+      document.getElementById('loginScreen').style.display = 'flex';
+      
+      // Limpiar formulario
+      document.getElementById('username').value = '';
+      document.getElementById('password').value = '';
+      document.getElementById('rememberMe').checked = false;
+      
+      showToast('Sesión cerrada correctamente', 'info');
+    }
+
+    function checkSavedLogin() {
+      const savedUser = localStorage.getItem('escolarfam_user');
+      if (savedUser) {
+        try {
+          currentUser = JSON.parse(savedUser);
+          
+          // Auto-login si el usuario eligió "No cerrar sesión"
+          if (currentUser.rememberMe) {
+            document.getElementById('loginScreen').style.display = 'none';
+            document.getElementById('appContainer').style.display = 'flex';
+            
+            currentRole = currentUser.role === 'director' ? 'admin' : currentUser.role;
+            document.getElementById('roleSelector').value = currentRole;
+            
+            isLoggedIn = true;
+            showRegisterButton();
+            updateNavigation();
+            renderScreens();
+            attachAppHeaderListeners();
+            
+            showToast(`Bienvenido de nuevo, ${currentUser.username}`, 'success');
+            return true;
+          }
+        } catch (error) {
+          localStorage.removeItem('escolarfam_user');
+        }
+      }
+      return false;
+    }
+
+    function attachLoginListeners() {
+      // Botón de tema en login
       document.getElementById('themeBtn').addEventListener('click', toggleTheme);
+      
+      // Botón de información
+      document.getElementById('infoBtn').addEventListener('click', showInfoModal);
+      
+      // Formulario de login
+      document.getElementById('loginForm').addEventListener('submit', handleLogin);
+      
+      // Cerrar modales al hacer clic fuera
+      document.getElementById('infoModal').addEventListener('click', (e) => {
+        if (e.target.id === 'infoModal') {
+          closeInfoModal();
+        }
+      });
+      
+      document.getElementById('forgotModal').addEventListener('click', (e) => {
+        if (e.target.id === 'forgotModal') {
+          closeForgotModal();
+        }
+      });
+    }
+
+    function attachAppHeaderListeners() {
+      document.getElementById('appThemeBtn').addEventListener('click', toggleTheme);
       
       document.getElementById('friendsBtn').addEventListener('click', () => {
         showModal('friendsModal');
@@ -3105,9 +3309,7 @@
         showModal('registerModal');
       });
       
-      document.getElementById('logoutBtn').addEventListener('click', () => {
-        showToast('Cerrando sesión...', 'info');
-      });
+      document.getElementById('logoutBtn').addEventListener('click', logout);
     }
 
     document.getElementById('roleSelector').addEventListener('change', (e) => {
@@ -3227,8 +3429,21 @@
     document.head.appendChild(animationStyle);
 
     // Inicializar la aplicación
-    showRegisterButton();
-    updateNavigation();
-    renderScreens();
-    attachHeaderListeners();
-  (function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'99d1602bf50f127d',t:'MTc2MjkwMTcxMC4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();
+    document.addEventListener('DOMContentLoaded', () => {
+      // Verificar si hay una sesión guardada
+      if (!checkSavedLogin()) {
+        // Si no hay sesión guardada, mostrar pantalla de login
+        attachLoginListeners();
+      }
+      
+      // Listener para cambio de rol (solo si está logueado)
+      document.getElementById('roleSelector').addEventListener('change', (e) => {
+        if (isLoggedIn) {
+          currentRole = e.target.value;
+          showRegisterButton();
+          updateNavigation();
+          renderScreens();
+        }
+      });
+    });
+  (function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'99e028257281c033',t:'MTc2MzA1NjcwMi4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();
