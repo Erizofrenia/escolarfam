@@ -378,7 +378,7 @@
     */
     
     // URL base de la API - cambiar para producción
-    const API_URL = 'https://hackersinternet.mx';
+    const API_URL = '';
     // const API_URL = ''; // Para desarrollo local
     
     let datosUsuarioActual = null;

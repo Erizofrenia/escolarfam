@@ -15,7 +15,6 @@ import configRoutes from "./routes/config.js";
 import consultasRoutes from "./routes/consultas.js";
 import amigosRoutes from "./routes/amigos.js";
 import asistenciaRoutes from "./routes/asistencia.js";
-import cors from "cors";
 
 dotenv.config();
 
@@ -40,11 +39,6 @@ app.get("/api/test", (req, res) => {
   res.json({ message: "Servidor Node.js funcionando correctamente 🚀" });
 });
 
-// Middleware de CORS
-app.use(cors({
-  origin: '*', // O especifica los dominios permitidos
-  credentials: true
-}));
 
 // Rutas API
 app.use("/api/usuarios", usuariosRoutes);
