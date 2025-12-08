@@ -568,7 +568,8 @@
         }
         
         const data = await response.json();
-        grupos = data.grupos;
+        // El endpoint de director devuelve {grupos:[]}, el de maestro devuelve array directo
+        grupos = Array.isArray(data) ? data : (data.grupos || []);
 
         if (!grupos || grupos.length === 0) {
           const mensaje = rolUsuarioActual === 'admin' ? 
@@ -967,31 +968,40 @@
       `;
     }
 
-    // Función para inicializar WebSocket y escuchar avisos de voz (cerebro)
+    // Función para inicializar polling de avisos de voz (adaptado para Laravel/PHP)
     window.initVoiceAnnouncementListener = function() {
       if (currentRole === 'admin' || currentRole === 'maestro') {
-        // Usar Server-Sent Events para escuchar avisos
-        const eventSource = new EventSource('/api/avisos/stream');
+        let lastAvisoId = 0;
         
-        eventSource.onmessage = function(event) {
+        // Función para consultar avisos mediante polling
+        const checkForAvisos = async () => {
           try {
-            const data = JSON.parse(event.data);
-            if (data.type === 'voice_announcement') {
-              playDirectorAnnouncement(data.mensaje, data.studentName, data.maestro);
+            const escuelaId = idEscuelaActual || datosUsuarioActual?.id_escuela || 1;
+            const response = await fetch(`${API_URL}/api/avisos/stream?id_escuela=${escuelaId}&last_id=${lastAvisoId}`);
+            if (response.ok) {
+              const data = await response.json();
+              if (data.avisos && data.avisos.length > 0) {
+                data.avisos.forEach(aviso => {
+                  if (aviso.tipo === 'voice_announcement' || aviso.tipo_aviso === 'voice_announcement') {
+                    playDirectorAnnouncement(aviso.mensaje || aviso.descripcion, aviso.studentName || aviso.nombre_completo, aviso.maestro);
+                  }
+                  // Actualizar el ID más alto
+                  if (aviso.id_ticket > lastAvisoId) {
+                    lastAvisoId = aviso.id_ticket;
+                  }
+                });
+              }
             }
           } catch (error) {
-            console.error('Error procesando aviso de voz:', error);
+            console.log('Error consultando avisos:', error);
           }
         };
         
-        eventSource.onerror = function(error) {
-          console.log('Conexión SSE perdida, reintentando...');
-          setTimeout(() => {
-            if (eventSource.readyState === EventSource.CLOSED) {
-              window.initVoiceAnnouncementListener();
-            }
-          }, 5000);
-        };
+        // Consultar cada 10 segundos en lugar de SSE continuo
+        window.voiceAnnouncementInterval = setInterval(checkForAvisos, 10000);
+        
+        // Consultar inmediatamente al iniciar
+        checkForAvisos();
       }
     };
 
@@ -1610,8 +1620,15 @@
       const nombre = (datosUsuarioActual && datosUsuarioActual.nombre_completo) ? datosUsuarioActual.nombre_completo : 'Usuario';
       const emailValue = (datosUsuarioActual && datosUsuarioActual.email) ? datosUsuarioActual.email : '';
       const rolValue = (datosUsuarioActual && datosUsuarioActual.rol) ? datosUsuarioActual.rol : '';
-      const asignacionValue = (datosUsuarioActual && datosUsuarioActual.asignacion) ? datosUsuarioActual.asignacion : 'N/A';
       const fotoValue = (datosUsuarioActual && datosUsuarioActual.foto_perfil) ? datosUsuarioActual.foto_perfil : null;
+      
+      // Usar asignacion_calculada (calculada por el backend según el rol) o asignacion directa
+      const asignacionValue = datosUsuarioActual?.asignacion_calculada || datosUsuarioActual?.asignacion || 'Sin asignación';
+      
+      // Determinar si el usuario puede editar su asignación (solo maestros y admin)
+      const puedeEditarAsignacion = currentRole === 'maestro' || currentRole === 'admin';
+      // Todos los usuarios pueden editar su email y contraseña
+      const puedeEditarCredenciales = true;
       
       // Generar HTML para la foto (si existe, mostrar imagen; si no, mostrar emoji del userData)
       const user = userData[currentRole];
@@ -1638,9 +1655,11 @@
               <input type="text" class="form-input" id="profileRole" value="${rolValue}" readonly>
             </div>
             <div class="form-group">
-              <label class="form-label">Asignación</label>
-              <input type="text" class="form-input" id="profileAssignment" value="${asignacionValue}" readonly>
+              <label class="form-label">Asignación ${puedeEditarAsignacion ? '(Materia que imparte)' : ''}</label>
+              <input type="text" class="form-input" id="profileAssignment" value="${asignacionValue}" ${puedeEditarAsignacion ? '' : 'readonly'} ${!puedeEditarAsignacion ? 'style="background: var(--bg-secondary); cursor: not-allowed;"' : ''}>
+              ${!puedeEditarAsignacion ? '<small style="color: var(--text-muted); font-size: 11px;">Este campo se actualiza automáticamente según tu rol</small>' : ''}
             </div>
+            ${puedeEditarCredenciales ? `
             <div class="form-group">
               <label class="form-label">Correo Electrónico</label>
               <input type="email" class="form-input" id="profileEmail" value="${emailValue}">
@@ -1653,6 +1672,13 @@
               <label class="form-label">Nueva Contraseña</label>
               <input type="password" class="form-input" id="profileNewPassword" placeholder="Dejar vacío para mantener actual">
             </div>
+            ` : `
+            <div class="form-group">
+              <label class="form-label">Correo Electrónico</label>
+              <input type="email" class="form-input" id="profileEmail" value="${emailValue}" readonly style="background: var(--bg-secondary); cursor: not-allowed;">
+              <small style="color: var(--text-muted); font-size: 11px;">Contacta a un administrador para cambiar tu correo o contraseña</small>
+            </div>
+            `}
           </div>
 
           ${schoolDataSection}
@@ -2139,147 +2165,1391 @@
       return date.toLocaleDateString();
     }
 
-    function renderConfigPanel() {
-      const isAdmin = currentRole === 'admin';
-      
-      if (!isAdmin) {
-        // Panel básico para otros roles
-        return `
-          <div class="config-panel">
-            <div class="screen-title">Panel de Configuración</div>
-            
-            <div class="config-section">
-              <div class="config-title">Notificaciones</div>
-              <div class="config-option">
-                <span>Alertas de recogida</span>
-                <div class="config-toggle active" data-config="alertas_recogida" onclick="toggleConfig(this)"></div>
-              </div>
-              <div class="config-option">
-                <span>Mensajes automáticos</span>
-                <div class="config-toggle" data-config="mensajes_automaticos" onclick="toggleConfig(this)"></div>
-              </div>
-              <div class="config-option">
-                <span>Recordatorios de tareas</span>
-                <div class="config-toggle active" data-config="recordatorios_tareas" onclick="toggleConfig(this)"></div>
-              </div>
-            </div>
+    // Variables globales para el panel CRUD
+    let panelActiveTab = 'usuarios';
+    let panelUsuarios = [];
+    let panelGrupos = [];
+    let panelAsignaturas = [];
 
-            <button class="save-button" id="saveConfigBtn" disabled onclick="saveConfiguration()">
-              <i class="fas fa-save"></i> Guardar Configuración
-            </button>
-          </div>
-        `;
+    async function renderConfigPanel() {
+      const isAdmin = currentRole === 'admin';
+      const isMaestro = currentRole === 'maestro';
+      
+      // Panel CRUD para Admin (Director)
+      if (isAdmin) {
+        return await renderAdminCRUDPanel();
       }
       
-      // Panel simplificado para ADMIN
+      // Panel CRUD limitado para Maestro
+      if (isMaestro) {
+        return await renderMaestroCRUDPanel();
+      }
+      
+      // Panel básico para otros roles
       return `
-        <div class="config-panel admin-config">
+        <div class="config-panel">
+          <div class="screen-title">Panel de Configuración</div>
+          
+          <div class="config-section">
+            <div class="config-title">Notificaciones</div>
+            <div class="config-option">
+              <span>Alertas de recogida</span>
+              <div class="config-toggle active" data-config="alertas_recogida" onclick="toggleConfig(this)"></div>
+            </div>
+            <div class="config-option">
+              <span>Mensajes automáticos</span>
+              <div class="config-toggle" data-config="mensajes_automaticos" onclick="toggleConfig(this)"></div>
+            </div>
+            <div class="config-option">
+              <span>Recordatorios de tareas</span>
+              <div class="config-toggle active" data-config="recordatorios_tareas" onclick="toggleConfig(this)"></div>
+            </div>
+          </div>
+
+          <button class="save-button" id="saveConfigBtn" disabled onclick="saveConfiguration()">
+            <i class="fas fa-save"></i> Guardar Configuración
+          </button>
+        </div>
+      `;
+    }
+
+    // Panel CRUD completo para Director/Admin
+    async function renderAdminCRUDPanel() {
+      // Cargar datos iniciales
+      await loadPanelData();
+      
+      return `
+        <div class="crud-panel-container">
           <div class="screen-title">
-            <i class="fas fa-cogs"></i> Panel de Configuración
+            <i class="fas fa-tools"></i> Panel de Administración
           </div>
           
-          <!-- Imagen de la Escuela -->
-          <div class="config-section">
-            <div class="config-title">
-              <i class="fas fa-image"></i> Imagen de la Escuela
-            </div>
-            <div class="school-logo-container" style="text-align: center; padding: 20px;">
-              <div id="schoolLogoPreview" style="width: 150px; height: 150px; margin: 0 auto 15px; border-radius: 15px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; overflow: hidden; border: 3px solid rgba(255,255,255,0.3);">
-                <i class="fas fa-school" style="font-size: 60px; color: rgba(255,255,255,0.7);"></i>
-              </div>
-              <input type="file" id="schoolLogoInput" accept="image/*" style="display: none;" onchange="previewSchoolLogo(this)">
-              <button class="btn-secondary" onclick="document.getElementById('schoolLogoInput').click()" style="padding: 10px 20px;">
-                <i class="fas fa-upload"></i> Cargar Logo
-              </button>
-              <button class="btn-secondary" onclick="removeSchoolLogo()" style="padding: 10px 20px; margin-left: 10px; background: rgba(255,107,107,0.2);">
-                <i class="fas fa-trash"></i> Quitar
-              </button>
-            </div>
-          </div>
-
-          <!-- Registro de Logs -->
-          <div class="config-section">
-            <div class="config-title">
-              <i class="fas fa-clipboard-list"></i> Registro de Actividad
-            </div>
-            <div class="config-option">
-              <span>
-                <i class="fas fa-history" style="margin-right: 8px; color: #667eea;"></i>
-                Registrar logs de actividad
-              </span>
-              <div class="config-toggle active" data-config="registrar_logs" onclick="toggleConfig(this)"></div>
-            </div>
-            <button class="btn-secondary" onclick="viewActivityLogs()" style="margin-top: 10px; width: 100%;">
-              <i class="fas fa-eye"></i> Ver Historial de Logs
+          <!-- Tabs de navegación -->
+          <div class="crud-tabs">
+            <button class="crud-tab ${panelActiveTab === 'usuarios' ? 'active' : ''}" onclick="switchPanelTab('usuarios')">
+              <i class="fas fa-users"></i> Usuarios
+            </button>
+            <button class="crud-tab ${panelActiveTab === 'grupos' ? 'active' : ''}" onclick="switchPanelTab('grupos')">
+              <i class="fas fa-layer-group"></i> Grupos
+            </button>
+            <button class="crud-tab ${panelActiveTab === 'asignaturas' ? 'active' : ''}" onclick="switchPanelTab('asignaturas')">
+              <i class="fas fa-book"></i> Asignaturas
+            </button>
+            <button class="crud-tab ${panelActiveTab === 'config' ? 'active' : ''}" onclick="switchPanelTab('config')">
+              <i class="fas fa-cog"></i> Configuración
             </button>
           </div>
+          
+          <!-- Contenido del tab activo -->
+          <div class="crud-tab-content" id="crudTabContent">
+            ${renderTabContent()}
+          </div>
+        </div>
+      `;
+    }
 
-          <!-- Mensajería -->
+    // Panel CRUD limitado para Maestro
+    async function renderMaestroCRUDPanel() {
+      // Cargar datos del maestro
+      try {
+        const [gruposRes, alumnosRes] = await Promise.all([
+          fetch(`${API_URL}/api/usuarios/${idUsuarioActual}/grupos-asignados`),
+          fetch(`${API_URL}/api/usuarios/escuela/${datosUsuarioActual.id_escuela}?rol=alumno`)
+        ]);
+        
+        const gruposMaestro = gruposRes.ok ? await gruposRes.json() : [];
+        const todosAlumnos = alumnosRes.ok ? await alumnosRes.json() : [];
+        
+        // Obtener IDs de alumnos en los grupos del maestro
+        let alumnosDelMaestro = [];
+        for (const grupo of gruposMaestro) {
+          const estudiantesRes = await fetch(`${API_URL}/api/grupos/${grupo.id_grupo}`);
+          if (estudiantesRes.ok) {
+            const data = await estudiantesRes.json();
+            alumnosDelMaestro = [...alumnosDelMaestro, ...(data.alumnos || [])];
+          }
+        }
+        
+        return `
+          <div class="crud-panel-container maestro-panel">
+            <div class="screen-title">
+              <i class="fas fa-chalkboard-teacher"></i> Panel del Maestro
+            </div>
+            
+            <div class="crud-tabs">
+              <button class="crud-tab ${panelActiveTab === 'mis-alumnos' ? 'active' : ''}" onclick="switchPanelTab('mis-alumnos')">
+                <i class="fas fa-user-graduate"></i> Mis Alumnos
+              </button>
+              <button class="crud-tab ${panelActiveTab === 'mis-grupos' ? 'active' : ''}" onclick="switchPanelTab('mis-grupos')">
+                <i class="fas fa-users-class"></i> Mis Grupos
+              </button>
+            </div>
+            
+            <div class="crud-tab-content">
+              ${panelActiveTab === 'mis-alumnos' ? renderMaestroAlumnosTab(alumnosDelMaestro) : renderMaestroGruposTab(gruposMaestro)}
+            </div>
+          </div>
+        `;
+      } catch (error) {
+        console.error('Error cargando panel del maestro:', error);
+        return '<p>Error al cargar datos del panel</p>';
+      }
+    }
+
+    // Tab de alumnos para maestro
+    function renderMaestroAlumnosTab(alumnos) {
+      return `
+        <div class="crud-section">
+          <div class="crud-header">
+            <div class="crud-stats">
+              <div class="stat-badge"><i class="fas fa-user-graduate"></i> ${alumnos.length} Alumnos</div>
+            </div>
+            <div class="crud-actions">
+              <input type="text" id="searchMaestroAlumnos" placeholder="Buscar alumnos..." class="search-input" oninput="filterMaestroAlumnosTable()">
+            </div>
+          </div>
+          
+          <div class="crud-table-container">
+            <table class="crud-table" id="maestroAlumnosTable">
+              <thead>
+                <tr>
+                  <th>Nombre</th>
+                  <th>Email</th>
+                  <th>Grupo</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${alumnos.map(alumno => `
+                  <tr>
+                    <td data-label="Nombre">
+                      <div class="user-cell">
+                        <img src="${alumno.foto_perfil || '/media/default-avatar.png'}" alt="${alumno.nombre_completo}" class="user-avatar">
+                        <span>${alumno.nombre_completo}</span>
+                      </div>
+                    </td>
+                    <td data-label="Email">${alumno.email}</td>
+                    <td data-label="Grupo">${alumno.asignacion || '-'}</td>
+                    <td data-label="Acciones">
+                      <div class="action-buttons">
+                        <button class="btn-icon btn-view" onclick="viewAlumnoInfo(${alumno.id_usuario})" title="Ver info">
+                          <i class="fas fa-eye"></i>
+                        </button>
+                        <button class="btn-icon btn-link" onclick="openVincularPadreMaestro(${alumno.id_usuario})" title="Gestionar padres">
+                          <i class="fas fa-user-friends"></i>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    // Tab de grupos para maestro
+    function renderMaestroGruposTab(grupos) {
+      return `
+        <div class="crud-section">
+          <div class="crud-header">
+            <div class="crud-stats">
+              <div class="stat-badge"><i class="fas fa-users-class"></i> ${grupos.length} Grupos</div>
+            </div>
+          </div>
+          
+          <div class="grupos-cards">
+            ${grupos.map(grupo => `
+              <div class="grupo-card">
+                <div class="grupo-header">
+                  <h3>${grupo.nombre_grupo}</h3>
+                  <span class="nivel-badge">${grupo.nivel || 'primaria'}</span>
+                </div>
+                <div class="grupo-info">
+                  <p><i class="fas fa-graduation-cap"></i> Grado: ${grupo.grado || '-'}</p>
+                  <p><i class="fas fa-users"></i> Sección: ${grupo.seccion || '-'}</p>
+                </div>
+                <div class="grupo-actions">
+                  <button class="btn-primary" onclick="viewGrupoAlumnosMaestro(${grupo.id_grupo})">
+                    <i class="fas fa-users"></i> Ver Alumnos
+                  </button>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    // Filtrar alumnos del maestro
+    window.filterMaestroAlumnosTable = function() {
+      const searchTerm = document.getElementById('searchMaestroAlumnos')?.value.toLowerCase() || '';
+      const rows = document.querySelectorAll('#maestroAlumnosTable tbody tr');
+      
+      rows.forEach(row => {
+        const nombre = row.cells[0]?.textContent.toLowerCase() || '';
+        const email = row.cells[1]?.textContent.toLowerCase() || '';
+        const matches = nombre.includes(searchTerm) || email.includes(searchTerm);
+        row.style.display = matches ? '' : 'none';
+      });
+    };
+
+    // Ver información del alumno
+    window.viewAlumnoInfo = async function(idAlumno) {
+      try {
+        const response = await fetch(`${API_URL}/api/usuarios/${idAlumno}`);
+        if (!response.ok) throw new Error('Error');
+        const alumno = await response.json();
+        
+        // Obtener padres
+        const padresRes = await fetch(`${API_URL}/api/usuarios/${idAlumno}/padres`);
+        const padres = padresRes.ok ? await padresRes.json() : [];
+        
+        showDynamicModal(`
+          <div class="crud-modal">
+            <h3><i class="fas fa-user"></i> Información del Alumno</h3>
+            <div class="alumno-info-detail">
+              <img src="${alumno.foto_perfil || '/media/default-avatar.png'}" alt="${alumno.nombre_completo}" class="info-avatar">
+              <h4>${alumno.nombre_completo}</h4>
+              <p><strong>Email:</strong> ${alumno.email}</p>
+              <p><strong>Grupo:</strong> ${alumno.asignacion || 'Sin asignar'}</p>
+              
+              <h5 style="margin-top: 20px;">Padres/Tutores:</h5>
+              ${padres.length > 0 ? padres.map(p => `
+                <div class="padre-info">
+                  <i class="fas fa-user"></i> ${p.nombre_completo} (${p.parentesco})
+                  <br><small>${p.email}</small>
+                </div>
+              `).join('') : '<p>No tiene padres registrados</p>'}
+            </div>
+            <div class="modal-actions">
+              <button class="btn-secondary" onclick="closeDynamicModal()">Cerrar</button>
+            </div>
+          </div>
+        `);
+      } catch (error) {
+        showToast('Error al cargar información', 'error');
+      }
+    };
+
+    // Vincular padre (versión maestro - solo puede vincular, no crear usuarios)
+    window.openVincularPadreMaestro = async function(idAlumno) {
+      const alumno = panelUsuarios.find(u => u.id_usuario === idAlumno) || { nombre_completo: 'Alumno' };
+      
+      // Obtener padres existentes
+      const padresRes = await fetch(`${API_URL}/api/usuarios/escuela/${datosUsuarioActual.id_escuela}?rol=padre`);
+      const todosPadres = padresRes.ok ? await padresRes.json() : [];
+      
+      // Obtener relaciones actuales
+      const relacionesRes = await fetch(`${API_URL}/api/relaciones/alumno/${idAlumno}`);
+      const relacionesActuales = relacionesRes.ok ? await relacionesRes.json() : [];
+      const padresVinculados = relacionesActuales.map(r => r.id_padre);
+      
+      showDynamicModal(`
+        <div class="crud-modal">
+          <h3><i class="fas fa-link"></i> Gestionar Padres - ${alumno.nombre_completo}</h3>
+          
+          <div class="current-relations">
+            <h4>Padres vinculados:</h4>
+            ${relacionesActuales.length > 0 ? relacionesActuales.map(r => `
+              <div class="relation-item">
+                <span>${r.nombre_completo} (${r.parentesco})</span>
+                <button class="btn-icon btn-delete" onclick="desvincularPadre(${r.id_padre}, ${idAlumno})">
+                  <i class="fas fa-unlink"></i>
+                </button>
+              </div>
+            `).join('') : '<p class="no-relations">No hay padres vinculados</p>'}
+          </div>
+          
+          <form id="vincularPadreFormMaestro" onsubmit="event.preventDefault(); saveVincularPadre(${idAlumno});">
+            <div class="form-group">
+              <label>Seleccionar Padre Existente *</label>
+              <select id="selectPadre" required>
+                <option value="">Seleccionar...</option>
+                ${todosPadres.filter(p => !padresVinculados.includes(p.id_usuario)).map(p => 
+                  `<option value="${p.id_usuario}">${p.nombre_completo} (${p.email})</option>`
+                ).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Parentesco *</label>
+              <select id="selectParentesco" required>
+                <option value="padre">Padre</option>
+                <option value="madre">Madre</option>
+                <option value="tutor">Tutor</option>
+                <option value="abuelo">Abuelo/a</option>
+                <option value="otro">Otro</option>
+              </select>
+            </div>
+            <div class="modal-actions">
+              <button type="submit" class="btn-primary"><i class="fas fa-link"></i> Vincular</button>
+              <button type="button" class="btn-secondary" onclick="closeDynamicModal()">Cerrar</button>
+            </div>
+          </form>
+          
+          <div class="info-note">
+            <i class="fas fa-info-circle"></i> Como maestro, solo puedes vincular padres existentes. 
+            Si necesitas crear un nuevo usuario padre, contacta al director.
+          </div>
+        </div>
+      `);
+    };
+
+    // Ver alumnos del grupo (versión maestro)
+    window.viewGrupoAlumnosMaestro = async function(idGrupo) {
+      try {
+        const response = await fetch(`${API_URL}/api/grupos/${idGrupo}`);
+        if (!response.ok) throw new Error('Error');
+        
+        const data = await response.json();
+        const grupo = data.grupo;
+        const alumnos = data.alumnos || [];
+        
+        showDynamicModal(`
+          <div class="crud-modal large">
+            <h3><i class="fas fa-users"></i> Alumnos de ${grupo.nombre_grupo}</h3>
+            
+            <div class="alumnos-list">
+              ${alumnos.length > 0 ? `
+                <div class="alumnos-grid">
+                  ${alumnos.map(alumno => `
+                    <div class="alumno-card">
+                      <img src="${alumno.foto_perfil || '/media/default-avatar.png'}" alt="${alumno.nombre_completo}">
+                      <div class="alumno-info">
+                        <strong>${alumno.nombre_completo}</strong>
+                        <small>${alumno.email}</small>
+                      </div>
+                      <button class="btn-icon btn-view" onclick="viewAlumnoInfo(${alumno.id_usuario})" title="Ver info">
+                        <i class="fas fa-eye"></i>
+                      </button>
+                    </div>
+                  `).join('')}
+                </div>
+              ` : '<p class="no-data">No hay alumnos asignados</p>'}
+            </div>
+            
+            <div class="modal-actions">
+              <button class="btn-secondary" onclick="closeDynamicModal()">Cerrar</button>
+            </div>
+          </div>
+        `);
+      } catch (error) {
+        showToast('Error al cargar alumnos', 'error');
+      }
+    };
+
+    // Renderizar contenido según el tab activo
+    function renderTabContent() {
+      switch(panelActiveTab) {
+        case 'usuarios':
+          return renderUsuariosTab();
+        case 'grupos':
+          return renderGruposTab();
+        case 'asignaturas':
+          return renderAsignaturasTab();
+        case 'config':
+          return renderConfigTab();
+        default:
+          return '<p>Selecciona una opción</p>';
+      }
+    }
+
+    // Tab de Usuarios
+    function renderUsuariosTab() {
+      const alumnos = panelUsuarios.filter(u => u.rol === 'alumno');
+      const padres = panelUsuarios.filter(u => u.rol === 'padre');
+      const maestros = panelUsuarios.filter(u => u.rol === 'maestro');
+      
+      return `
+        <div class="crud-section">
+          <div class="crud-header">
+            <div class="crud-stats">
+              <div class="stat-badge"><i class="fas fa-graduation-cap"></i> ${alumnos.length} Alumnos</div>
+              <div class="stat-badge"><i class="fas fa-user-friends"></i> ${padres.length} Padres</div>
+              <div class="stat-badge"><i class="fas fa-chalkboard-teacher"></i> ${maestros.length} Maestros</div>
+            </div>
+            <div class="crud-actions">
+              <input type="text" id="searchUsuarios" placeholder="Buscar usuarios..." class="search-input" oninput="filterUsuariosTable()">
+              <select id="filterRolUsuarios" class="filter-select" onchange="filterUsuariosTable()">
+                <option value="">Todos los roles</option>
+                <option value="alumno">Alumnos</option>
+                <option value="padre">Padres</option>
+                <option value="maestro">Maestros</option>
+              </select>
+              <button class="btn-primary" onclick="openCreateUsuarioModal()">
+                <i class="fas fa-plus"></i> Nuevo Usuario
+              </button>
+            </div>
+          </div>
+          
+          <div class="crud-table-container">
+            <table class="crud-table" id="usuariosTable">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Nombre</th>
+                  <th>Email</th>
+                  <th>Rol</th>
+                  <th>Grupo/Asignación</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${panelUsuarios.map(usuario => `
+                  <tr data-rol="${usuario.rol}">
+                    <td data-label="ID">${usuario.id_usuario}</td>
+                    <td data-label="Nombre">
+                      <div class="user-cell">
+                        <img src="${usuario.foto_perfil || '/media/default-avatar.png'}" alt="${usuario.nombre_completo}" class="user-avatar">
+                        <span>${usuario.nombre_completo}</span>
+                      </div>
+                    </td>
+                    <td data-label="Email">${usuario.email}</td>
+                    <td data-label="Rol"><span class="role-badge role-${usuario.rol}">${usuario.rol}</span></td>
+                    <td data-label="Grupo">${usuario.asignacion || '-'}</td>
+                    <td data-label="Acciones">
+                      <div class="action-buttons">
+                        <button class="btn-icon btn-edit" onclick="openEditUsuarioModal(${usuario.id_usuario})" title="Editar">
+                          <i class="fas fa-edit"></i>
+                        </button>
+                        ${usuario.rol === 'alumno' ? `
+                          <button class="btn-icon btn-link" onclick="openVincularPadreModal(${usuario.id_usuario})" title="Vincular Padre">
+                            <i class="fas fa-link"></i>
+                          </button>
+                        ` : ''}
+                        <button class="btn-icon btn-delete" onclick="deleteUsuario(${usuario.id_usuario})" title="Eliminar">
+                          <i class="fas fa-trash"></i>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    // Tab de Grupos
+    function renderGruposTab() {
+      return `
+        <div class="crud-section">
+          <div class="crud-header">
+            <div class="crud-stats">
+              <div class="stat-badge"><i class="fas fa-layer-group"></i> ${panelGrupos.length} Grupos</div>
+            </div>
+            <div class="crud-actions">
+              <input type="text" id="searchGrupos" placeholder="Buscar grupos..." class="search-input" oninput="filterGruposTable()">
+              <button class="btn-primary" onclick="openCreateGrupoModal()">
+                <i class="fas fa-plus"></i> Nuevo Grupo
+              </button>
+            </div>
+          </div>
+          
+          <div class="crud-table-container">
+            <table class="crud-table" id="gruposTable">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Nombre</th>
+                  <th>Maestro</th>
+                  <th>Nivel</th>
+                  <th>Grado</th>
+                  <th>Alumnos</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${panelGrupos.map(grupo => `
+                  <tr>
+                    <td data-label="ID">${grupo.id_grupo}</td>
+                    <td data-label="Nombre">${grupo.nombre_grupo}</td>
+                    <td data-label="Maestro">${grupo.nombre_maestro || 'Sin asignar'}</td>
+                    <td data-label="Nivel"><span class="nivel-badge">${grupo.nivel || 'primaria'}</span></td>
+                    <td data-label="Grado">${grupo.grado || '-'}</td>
+                    <td data-label="Alumnos">${grupo.total_alumnos || 0}</td>
+                    <td data-label="Acciones">
+                      <div class="action-buttons">
+                        <button class="btn-icon btn-view" onclick="viewGrupoAlumnos(${grupo.id_grupo})" title="Ver alumnos">
+                          <i class="fas fa-eye"></i>
+                        </button>
+                        <button class="btn-icon btn-edit" onclick="openEditGrupoModal(${grupo.id_grupo})" title="Editar">
+                          <i class="fas fa-edit"></i>
+                        </button>
+                        <button class="btn-icon btn-delete" onclick="deleteGrupo(${grupo.id_grupo})" title="Eliminar">
+                          <i class="fas fa-trash"></i>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    // Tab de Asignaturas
+    function renderAsignaturasTab() {
+      return `
+        <div class="crud-section">
+          <div class="crud-header">
+            <div class="crud-stats">
+              <div class="stat-badge"><i class="fas fa-book"></i> ${panelAsignaturas.length} Asignaturas</div>
+            </div>
+            <div class="crud-actions">
+              <input type="text" id="searchAsignaturas" placeholder="Buscar asignaturas..." class="search-input" oninput="filterAsignaturasTable()">
+              <button class="btn-primary" onclick="openCreateAsignaturaModal()">
+                <i class="fas fa-plus"></i> Nueva Asignatura
+              </button>
+            </div>
+          </div>
+          
+          <div class="crud-table-container">
+            <table class="crud-table" id="asignaturasTable">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Nombre de la Asignatura</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${panelAsignaturas.map(asignatura => `
+                  <tr>
+                    <td data-label="ID">${asignatura.id_asignatura}</td>
+                    <td data-label="Asignatura">${asignatura.nombre_asignatura}</td>
+                    <td data-label="Acciones">
+                      <div class="action-buttons">
+                        <button class="btn-icon btn-edit" onclick="openEditAsignaturaModal(${asignatura.id_asignatura})" title="Editar">
+                          <i class="fas fa-edit"></i>
+                        </button>
+                        <button class="btn-icon btn-delete" onclick="deleteAsignatura(${asignatura.id_asignatura})" title="Eliminar">
+                          <i class="fas fa-trash"></i>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    // Tab de Configuración (panel antiguo simplificado)
+    function renderConfigTab() {
+      return `
+        <div class="crud-section">
           <div class="config-section">
             <div class="config-title">
-              <i class="fas fa-comments"></i> Sistema de Mensajería
+              <i class="fas fa-bell"></i> Notificaciones del Sistema
             </div>
             <div class="config-option">
-              <span>
-                <i class="fas fa-toggle-on" style="margin-right: 8px; color: #4CAF50;"></i>
-                Activar sistema de mensajes
-              </span>
+              <span>Registrar logs de actividad</span>
+              <div class="config-toggle active" data-config="registrar_logs" onclick="toggleConfig(this)"></div>
+            </div>
+            <div class="config-option">
+              <span>Activar sistema de mensajes</span>
               <div class="config-toggle active" data-config="mensajes_habilitados" onclick="toggleConfig(this)"></div>
             </div>
-          </div>
-
-          <!-- Notificaciones del Maestro -->
-          <div class="config-section">
-            <div class="config-title">
-              <i class="fas fa-bell"></i> Notificaciones del Maestro
-            </div>
             <div class="config-option">
-              <span>
-                <i class="fas fa-volume-up" style="margin-right: 8px; color: #E91E63;"></i>
-                Mostrar botón de reproducir sonido
-              </span>
-              <div class="config-toggle active" data-config="mostrar_boton_sonido" onclick="toggleConfig(this)"></div>
+              <span>Permitir a maestros registrar usuarios</span>
+              <div class="config-toggle active" data-config="maestros_registrar_usuarios" onclick="toggleConfig(this)"></div>
             </div>
           </div>
-
-          <!-- Sistema -->
+          
           <div class="config-section">
             <div class="config-title">
               <i class="fas fa-server"></i> Sistema
             </div>
             <div class="config-option">
-              <span>
-                <i class="fas fa-hard-hat" style="margin-right: 8px; color: #FF5722;"></i>
-                Modo mantenimiento
-              </span>
+              <span>Modo mantenimiento</span>
               <div class="config-toggle" data-config="modo_mantenimiento" onclick="toggleConfig(this)"></div>
             </div>
             <div class="config-option">
-              <span>
-                <i class="fas fa-database" style="margin-right: 8px; color: #4CAF50;"></i>
-                Backup automático
-              </span>
+              <span>Backup automático</span>
               <div class="config-toggle active" data-config="backup_automatico" onclick="toggleConfig(this)"></div>
             </div>
-            <div class="config-option">
-              <span>
-                <i class="fas fa-chalkboard-teacher" style="margin-right: 8px; color: #2196F3;"></i>
-                Permitir a maestros registrar usuarios
-              </span>
-              <div class="config-toggle active" data-config="maestros_registrar_usuarios" onclick="toggleConfig(this)"></div>
-            </div>
           </div>
-
-          <button class="save-button" id="saveConfigBtn" onclick="saveConfiguration()">
+          
+          <button class="save-button" onclick="saveConfiguration()">
             <i class="fas fa-save"></i> Guardar Configuración
           </button>
-          
-          <div style="text-align: center; margin-top: 15px; opacity: 0.7;">
-            <small><i class="fas fa-info-circle"></i> Los cambios se aplicarán inmediatamente después de guardar</small>
-          </div>
         </div>
       `;
     }
+
+    // ==================== FUNCIONES AUXILIARES DEL PANEL CRUD ====================
+
+    // Cargar todos los datos del panel
+    async function loadPanelData() {
+      try {
+        const [usuariosRes, gruposRes, asignaturasRes] = await Promise.all([
+          fetch(`${API_URL}/api/usuarios/escuela/${datosUsuarioActual.id_escuela}`),
+          fetch(`${API_URL}/api/grupos/escuela/${datosUsuarioActual.id_escuela}`),
+          fetch(`${API_URL}/api/asignaturas/escuela/${datosUsuarioActual.id_escuela}`)
+        ]);
+        
+        if (usuariosRes.ok) panelUsuarios = await usuariosRes.json();
+        if (gruposRes.ok) panelGrupos = await gruposRes.json();
+        if (asignaturasRes.ok) panelAsignaturas = await asignaturasRes.json();
+      } catch (error) {
+        console.error('Error cargando datos del panel:', error);
+        showToast('Error al cargar datos', 'error');
+      }
+    }
+
+    // Cambiar de tab
+    window.switchPanelTab = async function(tab) {
+      panelActiveTab = tab;
+      await showScreen('panel');
+    };
+
+    // Filtrar tabla de usuarios
+    window.filterUsuariosTable = function() {
+      const searchTerm = document.getElementById('searchUsuarios')?.value.toLowerCase() || '';
+      const rolFilter = document.getElementById('filterRolUsuarios')?.value || '';
+      const rows = document.querySelectorAll('#usuariosTable tbody tr');
+      
+      rows.forEach(row => {
+        const nombre = row.cells[1]?.textContent.toLowerCase() || '';
+        const email = row.cells[2]?.textContent.toLowerCase() || '';
+        const rol = row.getAttribute('data-rol') || '';
+        
+        const matchesSearch = nombre.includes(searchTerm) || email.includes(searchTerm);
+        const matchesRol = !rolFilter || rol === rolFilter;
+        
+        row.style.display = matchesSearch && matchesRol ? '' : 'none';
+      });
+    };
+
+    // Filtrar tabla de grupos
+    window.filterGruposTable = function() {
+      const searchTerm = document.getElementById('searchGrupos')?.value.toLowerCase() || '';
+      const rows = document.querySelectorAll('#gruposTable tbody tr');
+      
+      rows.forEach(row => {
+        const nombre = row.cells[1]?.textContent.toLowerCase() || '';
+        const maestro = row.cells[2]?.textContent.toLowerCase() || '';
+        
+        const matches = nombre.includes(searchTerm) || maestro.includes(searchTerm);
+        row.style.display = matches ? '' : 'none';
+      });
+    };
+
+    // Filtrar tabla de asignaturas
+    window.filterAsignaturasTable = function() {
+      const searchTerm = document.getElementById('searchAsignaturas')?.value.toLowerCase() || '';
+      const rows = document.querySelectorAll('#asignaturasTable tbody tr');
+      
+      rows.forEach(row => {
+        const nombre = row.cells[1]?.textContent.toLowerCase() || '';
+        const matches = nombre.includes(searchTerm);
+        row.style.display = matches ? '' : 'none';
+      });
+    };
+
+    // ==================== MODALES Y ACCIONES CRUD ====================
+
+    // Modal para crear usuario
+    window.openCreateUsuarioModal = async function() {
+      // Cargar grupos para el selector
+      const gruposRes = await fetch(`${API_URL}/api/grupos/escuela/${datosUsuarioActual.id_escuela}`);
+      const grupos = gruposRes.ok ? await gruposRes.json() : [];
+      
+      showDynamicModal(`
+        <div class="crud-modal">
+          <h3><i class="fas fa-user-plus"></i> Crear Nuevo Usuario</h3>
+          <form id="createUsuarioForm" onsubmit="event.preventDefault(); saveNewUsuario();">
+            <div class="form-row">
+              <div class="form-group">
+                <label>Nombre Completo *</label>
+                <input type="text" id="usuarioNombre" required>
+              </div>
+              <div class="form-group">
+                <label>Email *</label>
+                <input type="email" id="usuarioEmail" required>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Nombre de Usuario *</label>
+                <input type="text" id="usuarioUsername" required>
+              </div>
+              <div class="form-group">
+                <label>Contraseña *</label>
+                <input type="password" id="usuarioPassword" required>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Rol *</label>
+                <select id="usuarioRol" required onchange="toggleGrupoSelect()">
+                  <option value="">Seleccionar...</option>
+                  <option value="alumno">Alumno</option>
+                  <option value="padre">Padre</option>
+                  <option value="maestro">Maestro</option>
+                </select>
+              </div>
+              <div class="form-group" id="grupoSelectContainer" style="display:none;">
+                <label>Grupo</label>
+                <select id="usuarioGrupo">
+                  <option value="">Sin grupo</option>
+                  ${grupos.map(g => `<option value="${g.id_grupo}">${g.nombre_grupo}</option>`).join('')}
+                </select>
+              </div>
+            </div>
+            <div class="modal-actions">
+              <button type="submit" class="btn-primary"><i class="fas fa-save"></i> Crear Usuario</button>
+              <button type="button" class="btn-secondary" onclick="closeDynamicModal()">Cancelar</button>
+            </div>
+          </form>
+        </div>
+      `);
+    };
+
+    // Mostrar/ocultar selector de grupo según rol
+    window.toggleGrupoSelect = function() {
+      const rol = document.getElementById('usuarioRol')?.value;
+      const container = document.getElementById('grupoSelectContainer');
+      if (container) {
+        container.style.display = rol === 'alumno' ? 'block' : 'none';
+      }
+    };
+
+    // Guardar nuevo usuario
+    window.saveNewUsuario = async function() {
+      const nombre = document.getElementById('usuarioNombre').value;
+      const email = document.getElementById('usuarioEmail').value;
+      const username = document.getElementById('usuarioUsername').value;
+      const password = document.getElementById('usuarioPassword').value;
+      const rol = document.getElementById('usuarioRol').value;
+      const idGrupo = document.getElementById('usuarioGrupo')?.value;
+      
+      try {
+        const response = await fetch(`${API_URL}/api/usuarios`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            nombre_completo: nombre,
+            email: email,
+            nombre_usuario: username,
+            password_hash: password,
+            rol: rol,
+            id_escuela: datosUsuarioActual.id_escuela,
+            activo: 1
+          })
+        });
+        
+        if (response.ok) {
+          const result = await response.json();
+          
+          // Si es alumno y tiene grupo, asignarlo
+          if (rol === 'alumno' && idGrupo) {
+            await fetch(`${API_URL}/api/grupos/${idGrupo}/asignar-alumno`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id_usuario: result.id })
+            });
+          }
+          
+          showToast('Usuario creado exitosamente', 'success');
+          closeDynamicModal();
+          await showScreen('panel');
+        } else {
+          throw new Error('Error al crear usuario');
+        }
+      } catch (error) {
+        console.error(error);
+        showToast('Error al crear usuario', 'error');
+      }
+    };
+
+    // Modal para editar usuario
+    window.openEditUsuarioModal = async function(idUsuario) {
+      const usuario = panelUsuarios.find(u => u.id_usuario === idUsuario);
+      if (!usuario) return;
+      
+      showDynamicModal(`
+        <div class="crud-modal">
+          <h3><i class="fas fa-user-edit"></i> Editar Usuario</h3>
+          <form id="editUsuarioForm" onsubmit="event.preventDefault(); saveEditUsuario(${idUsuario});">
+            <div class="form-row">
+              <div class="form-group">
+                <label>Nombre Completo *</label>
+                <input type="text" id="editUsuarioNombre" value="${usuario.nombre_completo}" required>
+              </div>
+              <div class="form-group">
+                <label>Email *</label>
+                <input type="email" id="editUsuarioEmail" value="${usuario.email}" required>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Rol</label>
+                <input type="text" value="${usuario.rol}" disabled>
+              </div>
+              <div class="form-group">
+                <label>Asignación</label>
+                <input type="text" id="editUsuarioAsignacion" value="${usuario.asignacion || ''}" placeholder="Ej: 6to A">
+              </div>
+            </div>
+            <div class="modal-actions">
+              <button type="submit" class="btn-primary"><i class="fas fa-save"></i> Guardar Cambios</button>
+              <button type="button" class="btn-secondary" onclick="closeDynamicModal()">Cancelar</button>
+            </div>
+          </form>
+        </div>
+      `);
+    };
+
+    // Guardar edición de usuario
+    window.saveEditUsuario = async function(idUsuario) {
+      const nombre = document.getElementById('editUsuarioNombre').value;
+      const email = document.getElementById('editUsuarioEmail').value;
+      const asignacion = document.getElementById('editUsuarioAsignacion').value;
+      
+      try {
+        const response = await fetch(`${API_URL}/api/usuarios/${idUsuario}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            nombre_completo: nombre,
+            email: email,
+            asignacion: asignacion
+          })
+        });
+        
+        if (response.ok) {
+          showToast('Usuario actualizado', 'success');
+          closeDynamicModal();
+          await showScreen('panel');
+        } else {
+          throw new Error('Error al actualizar');
+        }
+      } catch (error) {
+        showToast('Error al actualizar usuario', 'error');
+      }
+    };
+
+    // Eliminar usuario
+    window.deleteUsuario = async function(idUsuario) {
+      if (!confirm('¿Estás seguro de eliminar este usuario?')) return;
+      
+      try {
+        const response = await fetch(`${API_URL}/api/usuarios/${idUsuario}`, { method: 'DELETE' });
+        if (response.ok) {
+          showToast('Usuario eliminado', 'success');
+          await showScreen('panel');
+        } else {
+          throw new Error('Error');
+        }
+      } catch (error) {
+        showToast('Error al eliminar usuario', 'error');
+      }
+    };
+
+    // Modal para vincular padre a alumno
+    window.openVincularPadreModal = async function(idAlumno) {
+      const alumno = panelUsuarios.find(u => u.id_usuario === idAlumno);
+      const padres = panelUsuarios.filter(u => u.rol === 'padre');
+      
+      // Obtener padres ya vinculados
+      const relacionesRes = await fetch(`${API_URL}/api/relaciones/alumno/${idAlumno}`);
+      const relacionesActuales = relacionesRes.ok ? await relacionesRes.json() : [];
+      const padresVinculados = relacionesActuales.map(r => r.id_padre);
+      
+      showDynamicModal(`
+        <div class="crud-modal">
+          <h3><i class="fas fa-link"></i> Vincular Padre a ${alumno.nombre_completo}</h3>
+          
+          <div class="current-relations">
+            <h4>Padres vinculados actualmente:</h4>
+            ${relacionesActuales.length > 0 ? relacionesActuales.map(r => `
+              <div class="relation-item">
+                <span>${r.nombre_completo} (${r.parentesco})</span>
+                <button class="btn-icon btn-delete" onclick="desvincularPadre(${r.id_padre}, ${idAlumno})">
+                  <i class="fas fa-unlink"></i>
+                </button>
+              </div>
+            `).join('') : '<p class="no-relations">No hay padres vinculados</p>'}
+          </div>
+          
+          <form id="vincularPadreForm" onsubmit="event.preventDefault(); saveVincularPadre(${idAlumno});">
+            <div class="form-group">
+              <label>Seleccionar Padre *</label>
+              <select id="selectPadre" required>
+                <option value="">Seleccionar...</option>
+                ${padres.filter(p => !padresVinculados.includes(p.id_usuario)).map(p => 
+                  `<option value="${p.id_usuario}">${p.nombre_completo} (${p.email})</option>`
+                ).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Parentesco *</label>
+              <select id="selectParentesco" required>
+                <option value="padre">Padre</option>
+                <option value="madre">Madre</option>
+                <option value="tutor">Tutor</option>
+                <option value="abuelo">Abuelo/a</option>
+                <option value="otro">Otro</option>
+              </select>
+            </div>
+            <div class="modal-actions">
+              <button type="submit" class="btn-primary"><i class="fas fa-link"></i> Vincular</button>
+              <button type="button" class="btn-secondary" onclick="closeDynamicModal()">Cerrar</button>
+            </div>
+          </form>
+        </div>
+      `);
+    };
+
+    // Guardar vinculación padre-alumno
+    window.saveVincularPadre = async function(idAlumno) {
+      const idPadre = document.getElementById('selectPadre').value;
+      const parentesco = document.getElementById('selectParentesco').value;
+      
+      try {
+        const response = await fetch(`${API_URL}/api/relaciones`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id_padre: idPadre,
+            id_hijo: idAlumno,
+            parentesco: parentesco
+          })
+        });
+        
+        if (response.ok) {
+          showToast('Padre vinculado correctamente', 'success');
+          await openVincularPadreModal(idAlumno); // Recargar modal
+        } else {
+          throw new Error('Error');
+        }
+      } catch (error) {
+        showToast('Error al vincular padre', 'error');
+      }
+    };
+
+    // Desvincular padre de alumno
+    window.desvincularPadre = async function(idPadre, idHijo) {
+      if (!confirm('¿Desvincular este padre del alumno?')) return;
+      
+      try {
+        const response = await fetch(`${API_URL}/api/relaciones/${idPadre}/${idHijo}`, { method: 'DELETE' });
+        if (response.ok) {
+          showToast('Padre desvinculado', 'success');
+          await openVincularPadreModal(idHijo); // Recargar modal
+        }
+      } catch (error) {
+        showToast('Error al desvincular', 'error');
+      }
+    };
+
+    // ==================== CRUD DE GRUPOS ====================
+
+    // Modal para crear grupo
+    window.openCreateGrupoModal = async function() {
+      const maestrosRes = await fetch(`${API_URL}/api/usuarios/escuela/${datosUsuarioActual.id_escuela}?rol=maestro`);
+      const maestros = maestrosRes.ok ? await maestrosRes.json() : [];
+      
+      showDynamicModal(`
+        <div class="crud-modal">
+          <h3><i class="fas fa-layer-group"></i> Crear Nuevo Grupo</h3>
+          <form id="createGrupoForm" onsubmit="event.preventDefault(); saveNewGrupo();">
+            <div class="form-row">
+              <div class="form-group">
+                <label>Nombre del Grupo *</label>
+                <input type="text" id="grupoNombre" required placeholder="Ej: 6to A">
+              </div>
+              <div class="form-group">
+                <label>Maestro Titular</label>
+                <select id="grupoMaestro">
+                  <option value="">Sin asignar</option>
+                  ${maestros.map(m => `<option value="${m.id_usuario}">${m.nombre_completo}</option>`).join('')}
+                </select>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Nivel</label>
+                <select id="grupoNivel">
+                  <option value="kinder">Kinder</option>
+                  <option value="primaria" selected>Primaria</option>
+                  <option value="secundaria">Secundaria</option>
+                  <option value="preparatoria">Preparatoria</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Grado</label>
+                <input type="number" id="grupoGrado" min="1" max="12" placeholder="1-12">
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Sección</label>
+              <input type="text" id="grupoSeccion" placeholder="Ej: A, B, C">
+            </div>
+            <div class="modal-actions">
+              <button type="submit" class="btn-primary"><i class="fas fa-save"></i> Crear Grupo</button>
+              <button type="button" class="btn-secondary" onclick="closeDynamicModal()">Cancelar</button>
+            </div>
+          </form>
+        </div>
+      `);
+    };
+
+    // Guardar nuevo grupo
+    window.saveNewGrupo = async function() {
+      const nombre = document.getElementById('grupoNombre').value;
+      const idMaestro = document.getElementById('grupoMaestro').value;
+      const nivel = document.getElementById('grupoNivel').value;
+      const grado = document.getElementById('grupoGrado').value;
+      const seccion = document.getElementById('grupoSeccion').value;
+      
+      try {
+        const response = await fetch(`${API_URL}/api/grupos`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id_escuela: datosUsuarioActual.id_escuela,
+            nombre_grupo: nombre,
+            id_maestro: idMaestro || null,
+            nivel: nivel,
+            grado: grado || null,
+            seccion: seccion || null
+          })
+        });
+        
+        if (response.ok) {
+          showToast('Grupo creado exitosamente', 'success');
+          closeDynamicModal();
+          await showScreen('panel');
+        } else {
+          throw new Error('Error');
+        }
+      } catch (error) {
+        showToast('Error al crear grupo', 'error');
+      }
+    };
+
+    // Modal para editar grupo
+    window.openEditGrupoModal = async function(idGrupo) {
+      const grupo = panelGrupos.find(g => g.id_grupo === idGrupo);
+      if (!grupo) return;
+      
+      const maestrosRes = await fetch(`${API_URL}/api/usuarios/escuela/${datosUsuarioActual.id_escuela}?rol=maestro`);
+      const maestros = maestrosRes.ok ? await maestrosRes.json() : [];
+      
+      showDynamicModal(`
+        <div class="crud-modal">
+          <h3><i class="fas fa-edit"></i> Editar Grupo</h3>
+          <form id="editGrupoForm" onsubmit="event.preventDefault(); saveEditGrupo(${idGrupo});">
+            <div class="form-row">
+              <div class="form-group">
+                <label>Nombre del Grupo *</label>
+                <input type="text" id="editGrupoNombre" value="${grupo.nombre_grupo}" required>
+              </div>
+              <div class="form-group">
+                <label>Maestro Titular</label>
+                <select id="editGrupoMaestro">
+                  <option value="">Sin asignar</option>
+                  ${maestros.map(m => `<option value="${m.id_usuario}" ${m.id_usuario == grupo.id_maestro ? 'selected' : ''}>${m.nombre_completo}</option>`).join('')}
+                </select>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Nivel</label>
+                <select id="editGrupoNivel">
+                  <option value="kinder" ${grupo.nivel === 'kinder' ? 'selected' : ''}>Kinder</option>
+                  <option value="primaria" ${grupo.nivel === 'primaria' ? 'selected' : ''}>Primaria</option>
+                  <option value="secundaria" ${grupo.nivel === 'secundaria' ? 'selected' : ''}>Secundaria</option>
+                  <option value="preparatoria" ${grupo.nivel === 'preparatoria' ? 'selected' : ''}>Preparatoria</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Grado</label>
+                <input type="number" id="editGrupoGrado" value="${grupo.grado || ''}" min="1" max="12">
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Sección</label>
+              <input type="text" id="editGrupoSeccion" value="${grupo.seccion || ''}">
+            </div>
+            <div class="modal-actions">
+              <button type="submit" class="btn-primary"><i class="fas fa-save"></i> Guardar Cambios</button>
+              <button type="button" class="btn-secondary" onclick="closeDynamicModal()">Cancelar</button>
+            </div>
+          </form>
+        </div>
+      `);
+    };
+
+    // Guardar edición de grupo
+    window.saveEditGrupo = async function(idGrupo) {
+      const nombre = document.getElementById('editGrupoNombre').value;
+      const idMaestro = document.getElementById('editGrupoMaestro').value;
+      const nivel = document.getElementById('editGrupoNivel').value;
+      const grado = document.getElementById('editGrupoGrado').value;
+      const seccion = document.getElementById('editGrupoSeccion').value;
+      
+      try {
+        const response = await fetch(`${API_URL}/api/grupos/${idGrupo}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            nombre_grupo: nombre,
+            id_maestro: idMaestro || null,
+            nivel: nivel,
+            grado: grado || null,
+            seccion: seccion || null
+          })
+        });
+        
+        if (response.ok) {
+          showToast('Grupo actualizado', 'success');
+          closeDynamicModal();
+          await showScreen('panel');
+        } else {
+          throw new Error('Error');
+        }
+      } catch (error) {
+        showToast('Error al actualizar grupo', 'error');
+      }
+    };
+
+    // Eliminar grupo
+    window.deleteGrupo = async function(idGrupo) {
+      if (!confirm('¿Eliminar este grupo? Los alumnos NO se eliminarán.')) return;
+      
+      try {
+        const response = await fetch(`${API_URL}/api/grupos/${idGrupo}`, { method: 'DELETE' });
+        if (response.ok) {
+          showToast('Grupo eliminado', 'success');
+          await showScreen('panel');
+        } else {
+          throw new Error('Error');
+        }
+      } catch (error) {
+        showToast('Error al eliminar grupo', 'error');
+      }
+    };
+
+    // Ver alumnos del grupo
+    window.viewGrupoAlumnos = async function(idGrupo) {
+      try {
+        const response = await fetch(`${API_URL}/api/grupos/${idGrupo}`);
+        if (!response.ok) throw new Error('Error');
+        
+        const data = await response.json();
+        const grupo = data.grupo;
+        const alumnos = data.alumnos || [];
+        
+        // Obtener alumnos sin grupo para poder asignarlos
+        const alumnosRes = await fetch(`${API_URL}/api/usuarios/escuela/${datosUsuarioActual.id_escuela}?rol=alumno`);
+        const todosAlumnos = alumnosRes.ok ? await alumnosRes.json() : [];
+        const alumnosIds = alumnos.map(a => a.id_usuario);
+        const alumnosSinGrupo = todosAlumnos.filter(a => !alumnosIds.includes(a.id_usuario));
+        
+        showDynamicModal(`
+          <div class="crud-modal large">
+            <h3><i class="fas fa-users"></i> Alumnos de ${grupo.nombre_grupo}</h3>
+            
+            <div class="alumnos-list">
+              <h4>Alumnos asignados (${alumnos.length}):</h4>
+              ${alumnos.length > 0 ? `
+                <div class="alumnos-grid">
+                  ${alumnos.map(alumno => `
+                    <div class="alumno-card">
+                      <img src="${alumno.foto_perfil || '/media/default-avatar.png'}" alt="${alumno.nombre_completo}">
+                      <div class="alumno-info">
+                        <strong>${alumno.nombre_completo}</strong>
+                        <small>${alumno.email}</small>
+                      </div>
+                      <button class="btn-icon btn-delete" onclick="quitarAlumnoGrupo(${idGrupo}, ${alumno.id_usuario})" title="Quitar">
+                        <i class="fas fa-times"></i>
+                      </button>
+                    </div>
+                  `).join('')}
+                </div>
+              ` : '<p class="no-data">No hay alumnos asignados</p>'}
+            </div>
+            
+            <div class="asignar-alumno-section">
+              <h4>Asignar nuevo alumno:</h4>
+              <div class="form-inline">
+                <select id="selectAlumnoGrupo" style="flex: 1;">
+                  <option value="">Seleccionar alumno...</option>
+                  ${alumnosSinGrupo.map(a => `<option value="${a.id_usuario}">${a.nombre_completo}</option>`).join('')}
+                </select>
+                <button class="btn-primary" onclick="asignarAlumnoAGrupo(${idGrupo})">
+                  <i class="fas fa-plus"></i> Asignar
+                </button>
+              </div>
+            </div>
+            
+            <div class="modal-actions">
+              <button class="btn-secondary" onclick="closeDynamicModal()">Cerrar</button>
+            </div>
+          </div>
+        `);
+      } catch (error) {
+        showToast('Error al cargar alumnos del grupo', 'error');
+      }
+    };
+
+    // Asignar alumno a grupo
+    window.asignarAlumnoAGrupo = async function(idGrupo) {
+      const idAlumno = document.getElementById('selectAlumnoGrupo')?.value;
+      if (!idAlumno) {
+        showToast('Selecciona un alumno', 'warning');
+        return;
+      }
+      
+      try {
+        const response = await fetch(`${API_URL}/api/grupos/${idGrupo}/asignar-alumno`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id_usuario: idAlumno })
+        });
+        
+        if (response.ok) {
+          showToast('Alumno asignado al grupo', 'success');
+          await viewGrupoAlumnos(idGrupo); // Recargar modal
+        } else {
+          const error = await response.json();
+          showToast(error.message || 'Error al asignar', 'error');
+        }
+      } catch (error) {
+        showToast('Error al asignar alumno', 'error');
+      }
+    };
+
+    // Quitar alumno de grupo
+    window.quitarAlumnoGrupo = async function(idGrupo, idAlumno) {
+      if (!confirm('¿Quitar este alumno del grupo?')) return;
+      
+      try {
+        const response = await fetch(`${API_URL}/api/grupos/${idGrupo}/quitar-alumno/${idAlumno}`, { method: 'DELETE' });
+        if (response.ok) {
+          showToast('Alumno quitado del grupo', 'success');
+          await viewGrupoAlumnos(idGrupo); // Recargar modal
+        }
+      } catch (error) {
+        showToast('Error al quitar alumno', 'error');
+      }
+    };
+
+    // ==================== CRUD DE ASIGNATURAS ====================
+
+    // Modal para crear asignatura
+    window.openCreateAsignaturaModal = function() {
+      showDynamicModal(`
+        <div class="crud-modal">
+          <h3><i class="fas fa-book"></i> Crear Nueva Asignatura</h3>
+          <form id="createAsignaturaForm" onsubmit="event.preventDefault(); saveNewAsignatura();">
+            <div class="form-group">
+              <label>Nombre de la Asignatura *</label>
+              <input type="text" id="asignaturaNombre" required placeholder="Ej: Matemáticas">
+            </div>
+            <div class="modal-actions">
+              <button type="submit" class="btn-primary"><i class="fas fa-save"></i> Crear Asignatura</button>
+              <button type="button" class="btn-secondary" onclick="closeDynamicModal()">Cancelar</button>
+            </div>
+          </form>
+        </div>
+      `);
+    };
+
+    // Guardar nueva asignatura
+    window.saveNewAsignatura = async function() {
+      const nombre = document.getElementById('asignaturaNombre').value;
+      
+      try {
+        const response = await fetch(`${API_URL}/api/asignaturas`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ nombre_asignatura: nombre })
+        });
+        
+        if (response.ok) {
+          showToast('Asignatura creada', 'success');
+          closeDynamicModal();
+          await showScreen('panel');
+        } else {
+          throw new Error('Error');
+        }
+      } catch (error) {
+        showToast('Error al crear asignatura', 'error');
+      }
+    };
+
+    // Modal para editar asignatura
+    window.openEditAsignaturaModal = function(idAsignatura) {
+      const asignatura = panelAsignaturas.find(a => a.id_asignatura === idAsignatura);
+      if (!asignatura) return;
+      
+      showDynamicModal(`
+        <div class="crud-modal">
+          <h3><i class="fas fa-edit"></i> Editar Asignatura</h3>
+          <form id="editAsignaturaForm" onsubmit="event.preventDefault(); saveEditAsignatura(${idAsignatura});">
+            <div class="form-group">
+              <label>Nombre de la Asignatura *</label>
+              <input type="text" id="editAsignaturaNombre" value="${asignatura.nombre_asignatura}" required>
+            </div>
+            <div class="modal-actions">
+              <button type="submit" class="btn-primary"><i class="fas fa-save"></i> Guardar Cambios</button>
+              <button type="button" class="btn-secondary" onclick="closeDynamicModal()">Cancelar</button>
+            </div>
+          </form>
+        </div>
+      `);
+    };
+
+    // Guardar edición de asignatura
+    window.saveEditAsignatura = async function(idAsignatura) {
+      const nombre = document.getElementById('editAsignaturaNombre').value;
+      
+      try {
+        const response = await fetch(`${API_URL}/api/asignaturas/${idAsignatura}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ nombre_asignatura: nombre })
+        });
+        
+        if (response.ok) {
+          showToast('Asignatura actualizada', 'success');
+          closeDynamicModal();
+          await showScreen('panel');
+        } else {
+          throw new Error('Error');
+        }
+      } catch (error) {
+        showToast('Error al actualizar asignatura', 'error');
+      }
+    };
+
+    // Eliminar asignatura
+    window.deleteAsignatura = async function(idAsignatura) {
+      if (!confirm('¿Eliminar esta asignatura?')) return;
+      
+      try {
+        const response = await fetch(`${API_URL}/api/asignaturas/${idAsignatura}`, { method: 'DELETE' });
+        if (response.ok) {
+          showToast('Asignatura eliminada', 'success');
+          await showScreen('panel');
+        } else {
+          throw new Error('Error');
+        }
+      } catch (error) {
+        showToast('Error al eliminar asignatura', 'error');
+      }
+    };
 
     // Variables globales para tickets
     let ticketsData = [];
@@ -3346,7 +4616,17 @@
 
     function showRegisterButton() {
       const registerBtn = document.getElementById('registerBtn');
+      
+      // Verificar si maestros pueden registrar (el valor puede venir como string "1", "true", true, o 1)
+      const maestrosPuedenRegistrar = schoolConfig.maestros_registrar_usuarios === true || 
+                                       schoolConfig.maestros_registrar_usuarios === 1 ||
+                                       schoolConfig.maestros_registrar_usuarios === "1" ||
+                                       schoolConfig.maestros_registrar_usuarios === "true";
+      
       if (currentRole === 'admin' || currentRole === 'director') {
+        registerBtn.style.display = 'flex';
+      } else if (currentRole === 'maestro' && maestrosPuedenRegistrar) {
+        // Maestros pueden registrar si el director lo ha habilitado
         registerBtn.style.display = 'flex';
       } else {
         registerBtn.style.display = 'none';
@@ -3360,18 +4640,62 @@
 
     async function renderRegisterForm() {
       // Cargar datos necesarios
+      const idEscuela = datosUsuarioActual?.id_escuela || idEscuelaActual || 1;
       try {
+        // Diferenciar carga de grupos según el rol
+        let gruposUrl;
+        if (currentRole === 'maestro') {
+          // Maestro: solo cargar sus grupos asignados
+          gruposUrl = `${API_URL}/api/usuarios/${idUsuarioActual}/grupos-asignados`;
+        } else {
+          // Admin/Director: cargar todos los grupos de la escuela
+          gruposUrl = `${API_URL}/api/usuarios/escuela/${idEscuela}/todos-grupos`;
+        }
+
         const [gruposRes, asignaturasRes] = await Promise.all([
-          fetch(API_URL + '/api/auth/grupos/all'),
-          fetch(API_URL + '/api/auth/asignaturas/all')
+          fetch(gruposUrl),
+          fetch(`${API_URL}/api/consultas/asignaturas/${idEscuela}`)
         ]);
-        gruposCache = await gruposRes.json();
-        asignaturasCache = await asignaturasRes.json();
+        
+        const gruposData = await gruposRes.json();
+        const asignaturasData = await asignaturasRes.json();
+        
+        // Asegurar que sean arrays (el endpoint de maestro devuelve array directo)
+        gruposCache = Array.isArray(gruposData) ? gruposData : (gruposData.grupos || []);
+        asignaturasCache = Array.isArray(asignaturasData) ? asignaturasData : [];
       } catch (err) {
         console.error('Error cargando datos:', err);
+        gruposCache = [];
+        asignaturasCache = [];
       }
 
       gruposSeleccionadosMaestro = [];
+
+      // Verificar si maestros pueden registrar (el valor puede venir como string "1", "true", true, o 1)
+      const maestrosPuedenRegistrar = schoolConfig.maestros_registrar_usuarios === true || 
+                                       schoolConfig.maestros_registrar_usuarios === 1 ||
+                                       schoolConfig.maestros_registrar_usuarios === "1" ||
+                                       schoolConfig.maestros_registrar_usuarios === "true";
+
+      // Determinar qué roles puede registrar el usuario actual
+      let rolesDisponibles = '';
+      if (currentRole === 'admin' || currentRole === 'director') {
+        // Admin/Director puede registrar todos los roles
+        rolesDisponibles = `
+          <option value="">Seleccionar rol...</option>
+          <option value="alumno">👨‍🎓 Alumno</option>
+          <option value="padre">👪 Padre de Familia</option>
+          <option value="maestro">👨‍🏫 Maestro</option>
+          <option value="admin">🔐 Administrador</option>
+        `;
+      } else if (currentRole === 'maestro' && maestrosPuedenRegistrar) {
+        // Maestros solo pueden registrar alumnos y padres
+        rolesDisponibles = `
+          <option value="">Seleccionar rol...</option>
+          <option value="alumno">👨‍🎓 Alumno</option>
+          <option value="padre">👪 Padre de Familia</option>
+        `;
+      }
 
       const container = document.getElementById('registerForm');
       container.innerHTML = `
@@ -3382,11 +4706,7 @@
               <i class="fas fa-user-tag"></i> Tipo de Usuario *
             </label>
             <select id="registerRolSelect" style="width: 100%; padding: 12px; border-radius: 10px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary); font-size: 14px;">
-              <option value="">Seleccionar rol...</option>
-              <option value="alumno">👨‍🎓 Alumno</option>
-              <option value="padre">👪 Padre de Familia</option>
-              <option value="maestro">👨‍🏫 Maestro</option>
-              <option value="admin">🔐 Administrador</option>
+              ${rolesDisponibles}
             </select>
           </div>
 
@@ -3454,6 +4774,17 @@
 
       // ========== CAMPOS PARA ALUMNO ==========
       if (rol === 'alumno') {
+        // Para maestros: solo mostrar sus grupos asignados sin opción de crear nuevo
+        const esMaestro = currentRole === 'maestro';
+        const opcionesGrupo = esMaestro ? 
+          (gruposCache.length > 0 ?
+            `<option value="">Seleccionar grupo...</option>
+             ${gruposCache.map(g => `<option value="${g.id_grupo}">${g.nombre_grupo} ${g.nivel ? `(${g.nivel})` : ''}</option>`).join('')}` :
+            `<option value="">No tienes grupos asignados</option>`
+          ) :
+          `<option value="nuevo" selected>➕ Crear/Asignar nuevo grupo</option>
+           ${gruposCache.map(g => `<option value="${g.id_grupo}">${g.nombre_grupo} ${g.nivel ? `(${g.nivel})` : ''} ${g.maestro_nombre ? `- ${g.maestro_nombre}` : ''}</option>`).join('')}`;
+
         html += `
           <!-- Nivel y Grupo -->
           <div style="background: var(--bg-secondary); border-radius: 12px; padding: 15px; margin-bottom: 15px;">
@@ -3462,13 +4793,15 @@
             </h4>
             
             <div class="form-group" style="margin-bottom: 12px;">
-              <label style="display: block; margin-bottom: 5px; font-size: 12px; color: var(--text-secondary);">¿Usar grupo existente?</label>
+              <label style="display: block; margin-bottom: 5px; font-size: 12px; color: var(--text-secondary);">
+                ${esMaestro ? 'Asignar a mi grupo:' : '¿Usar grupo existente?'}
+              </label>
               <select id="regGrupoSelect" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary); font-size: 13px;">
-                <option value="nuevo" selected>➕ Crear/Asignar nuevo grupo</option>
-                ${gruposCache.map(g => `<option value="${g.id_grupo}">${g.nombre_grupo} ${g.nivel ? `(${g.nivel})` : ''} ${g.maestro_nombre ? `- ${g.maestro_nombre}` : ''}</option>`).join('')}
+                ${opcionesGrupo}
               </select>
             </div>
             
+            ${!esMaestro ? `
             <div id="nuevoGrupoFields" style="background: var(--bg-card); padding: 12px; border-radius: 8px; margin-top: 10px;">
               <div style="font-size: 12px; color: var(--accent-color); margin-bottom: 10px;"><i class="fas fa-plus-circle"></i> Definir Grupo del Alumno</div>
               
@@ -3510,6 +4843,7 @@
                 <input type="hidden" id="regIdMaestroGrupo">
               </div>
             </div>
+            ` : ''}
           </div>
 
           <!-- Tutor/Padre -->
@@ -3556,42 +4890,112 @@
         html += `
           <div style="background: var(--bg-secondary); border-radius: 12px; padding: 15px; margin-bottom: 15px;">
             <h4 style="margin: 0 0 12px 0; color: var(--text-primary); font-size: 14px;">
-              <i class="fas fa-chalkboard-teacher"></i> Grupos y Asignaturas
+              <i class="fas fa-chalkboard-teacher"></i> Asignación de Grupo (Opcional)
             </h4>
             
+            <p style="color: var(--text-muted); font-size: 12px; margin: 0 0 12px 0;">
+              Puedes asignar un grupo existente o crear uno nuevo para este maestro.
+            </p>
+            
             <div class="form-group" style="margin-bottom: 12px;">
-              <label style="display: block; margin-bottom: 5px; font-size: 12px; color: var(--text-secondary);">Agregar Grupo</label>
+              <label style="display: block; margin-bottom: 5px; font-size: 12px; color: var(--text-secondary);">Seleccionar Grupo</label>
               <select id="regMaestroGrupoSelect" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary); font-size: 13px;">
-                <option value="">-- Seleccionar grupo --</option>
-                ${gruposCache.map(g => `<option value="${g.id_grupo}">${g.nombre_grupo} ${g.nivel ? `(${g.nivel})` : ''}</option>`).join('')}
+                <option value="">-- Sin grupo asignado --</option>
+                <option value="nuevo">➕ Crear nuevo grupo</option>
+                ${gruposCache.map(g => `<option value="${g.id_grupo}">${g.nombre_grupo} ${g.nivel ? `(${g.nivel})` : ''} ${g.nombre_maestro ? `- Asignado a: ${g.nombre_maestro}` : '- Sin maestro'}</option>`).join('')}
               </select>
             </div>
             
-            <div id="asignaturasSeleccion" style="display: none; margin-bottom: 12px;">
-              <label style="display: block; margin-bottom: 5px; font-size: 12px; color: var(--text-secondary);">Asignaturas en este grupo</label>
-              <div id="asignaturasCheckboxes" style="display: flex; flex-wrap: wrap; gap: 8px; background: var(--bg-card); padding: 10px; border-radius: 8px;">
-                ${asignaturasCache.map(a => `
-                  <label style="display: flex; align-items: center; gap: 5px; background: var(--bg-secondary); padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 12px;">
-                    <input type="checkbox" class="asignaturaCheck" value="${a.id_asignatura}">
-                    ${a.nombre_asignatura}
-                  </label>
-                `).join('')}
+            <!-- Formulario para crear nuevo grupo (desplegable) -->
+            <div id="nuevoGrupoMaestroFields" style="display: none; background: var(--bg-card); padding: 15px; border-radius: 10px; margin-top: 12px; border: 2px dashed var(--accent-color);">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
+                <i class="fas fa-plus-circle" style="color: var(--accent-color);"></i>
+                <span style="font-size: 13px; font-weight: 600; color: var(--accent-color);">Crear Nuevo Grupo</span>
               </div>
-              <button type="button" onclick="agregarGrupoMaestro()" style="margin-top: 10px; padding: 8px 16px; background: var(--accent-color); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 13px;">
-                <i class="fas fa-plus"></i> Agregar Grupo
-              </button>
+              
+              <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 12px;">
+                <div>
+                  <label style="display: block; margin-bottom: 5px; font-size: 11px; color: var(--text-secondary);">Nivel *</label>
+                  <select id="regMaestroNivel" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary); font-size: 13px;">
+                    <option value="kinder">🎒 Kinder</option>
+                    <option value="primaria" selected>📚 Primaria</option>
+                    <option value="secundaria">📖 Secundaria</option>
+                    <option value="preparatoria">🎓 Preparatoria</option>
+                    <option value="universidad">🏛️ Universidad</option>
+                  </select>
+                </div>
+                <div>
+                  <label style="display: block; margin-bottom: 5px; font-size: 11px; color: var(--text-secondary);">Grado *</label>
+                  <select id="regMaestroGrado" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary); font-size: 13px;">
+                    ${[1,2,3,4,5,6].map(g => `<option value="${g}">${g}°</option>`).join('')}
+                  </select>
+                </div>
+                <div>
+                  <label style="display: block; margin-bottom: 5px; font-size: 11px; color: var(--text-secondary);">Sección *</label>
+                  <select id="regMaestroSeccion" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary); font-size: 13px;">
+                    ${['A','B','C','D','E','F'].map(s => `<option value="${s}">${s}</option>`).join('')}
+                  </select>
+                </div>
+              </div>
+              
+              <div id="previewNuevoGrupoMaestro" style="background: var(--bg-secondary); padding: 10px; border-radius: 8px; text-align: center;">
+                <span style="font-size: 11px; color: var(--text-muted);">El grupo se creará como:</span>
+                <span id="nombreGrupoMaestroGenerado" style="font-weight: bold; color: var(--accent-color); margin-left: 8px;">Primaria 1° A</span>
+              </div>
             </div>
             
-            <div id="gruposAgregadosMaestro" style="margin-top: 15px;"></div>
+            <!-- Materia Principal del Maestro -->
+            <div style="margin-top: 15px; background: var(--bg-card); padding: 12px; border-radius: 8px;">
+              <label style="display: block; margin-bottom: 8px; font-size: 12px; color: var(--text-secondary);">
+                <i class="fas fa-star"></i> Materia Principal que Imparte *
+              </label>
+              <select id="regMateriaPrincipal" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary); font-size: 13px; margin-bottom: 10px;">
+                <option value="">-- Seleccionar materia existente --</option>
+                ${asignaturasCache && asignaturasCache.length > 0 ? asignaturasCache.map(a => `<option value="${a.nombre_asignatura}">${a.nombre_asignatura}</option>`).join('') : ''}
+              </select>
+              <input type="text" id="regMateriaPrincipalNueva" placeholder="O escribe una nueva materia..."
+                style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary); font-size: 13px; box-sizing: border-box;">
+              <p style="margin: 8px 0 0 0; font-size: 11px; color: var(--text-muted);">
+                Si escribes una nueva materia, se guardará automáticamente para usarla después.
+              </p>
+            </div>
+            
+            <!-- Asignaturas adicionales (se muestra cuando hay grupo seleccionado o nuevo) -->
+            <div id="asignaturasSeleccion" style="display: none; margin-top: 15px; background: var(--bg-card); padding: 12px; border-radius: 8px;">
+              <label style="display: block; margin-bottom: 8px; font-size: 12px; color: var(--text-secondary);">
+                <i class="fas fa-book"></i> Otras Asignaturas que impartirá (opcional)
+              </label>
+              <div id="asignaturasCheckboxes" style="display: flex; flex-wrap: wrap; gap: 8px;">
+                ${asignaturasCache && asignaturasCache.length > 0 ? asignaturasCache.map(a => `
+                  <label style="display: flex; align-items: center; gap: 5px; background: var(--bg-secondary); padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: all 0.2s;">
+                    <input type="checkbox" class="asignaturaCheck" value="${a.id_asignatura}" data-nombre="${a.nombre_asignatura}">
+                    ${a.nombre_asignatura}
+                  </label>
+                `).join('') : '<span style="color: var(--text-muted); font-size: 12px;">No hay asignaturas registradas.</span>'}
+              </div>
+              
+              <!-- Opción para agregar nueva asignatura -->
+              <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-color);">
+                <div style="display: flex; gap: 8px;">
+                  <input type="text" id="regNuevaAsignatura" placeholder="Agregar otra asignatura..."
+                    style="flex: 1; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary); font-size: 12px;">
+                  <button type="button" onclick="agregarNuevaAsignatura()" style="padding: 8px 12px; background: var(--accent-color); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 12px;">
+                    <i class="fas fa-plus"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
           
-          <div style="background: var(--bg-secondary); border-radius: 12px; padding: 15px; margin-bottom: 15px;">
+          <!-- Grupos adicionales (para maestros que tengan varios grupos) -->
+          <div id="gruposAdicionalesMaestro" style="background: var(--bg-secondary); border-radius: 12px; padding: 15px; margin-bottom: 15px; display: none;">
             <h4 style="margin: 0 0 12px 0; color: var(--text-primary); font-size: 14px;">
-              <i class="fas fa-book"></i> Nueva Asignatura (Opcional)
+              <i class="fas fa-layer-group"></i> Grupos Adicionales
             </h4>
-            <input type="text" id="regNuevaAsignatura" placeholder="Nombre de nueva asignatura..."
-              style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary); font-size: 13px; box-sizing: border-box;">
-            <small style="color: var(--text-muted); font-size: 11px;">Si la asignatura no existe, escríbela aquí</small>
+            <div id="listaGruposAdicionales"></div>
+            <button type="button" onclick="mostrarAgregarGrupoAdicional()" style="width: 100%; padding: 10px; background: transparent; border: 2px dashed var(--border-color); border-radius: 8px; color: var(--text-muted); cursor: pointer; font-size: 13px; margin-top: 10px;">
+              <i class="fas fa-plus"></i> Agregar otro grupo
+            </button>
           </div>
         `;
       }
@@ -3649,7 +5053,9 @@
             try {
               const res = await fetch(`${API_URL}/api/auth/check-username/${encodeURIComponent(username)}`);
               const data = await res.json();
-              statusEl.innerHTML = data.available 
+              // El backend devuelve 'disponible', no 'available'
+              const isAvailable = data.disponible || data.available;
+              statusEl.innerHTML = isAvailable 
                 ? '<span style="color: #4CAF50;">✓ Disponible</span>'
                 : '<span style="color: #f44336;">✗ Ya está en uso</span>';
             } catch (err) {
@@ -3673,13 +5079,14 @@
 
         // Grupo select - mostrar/ocultar campos de nuevo grupo
         const grupoSelect = document.getElementById('regGrupoSelect');
-        if (grupoSelect) {
+        const nuevoGrupoFields = document.getElementById('nuevoGrupoFields');
+        if (grupoSelect && nuevoGrupoFields) {
           grupoSelect.addEventListener('change', (e) => {
-            document.getElementById('nuevoGrupoFields').style.display = e.target.value === 'nuevo' ? 'block' : 'none';
+            nuevoGrupoFields.style.display = e.target.value === 'nuevo' ? 'block' : 'none';
           });
           // Mostrar por defecto si está seleccionado "nuevo"
           if (grupoSelect.value === 'nuevo') {
-            document.getElementById('nuevoGrupoFields').style.display = 'block';
+            nuevoGrupoFields.style.display = 'block';
           }
         }
 
@@ -3721,14 +5128,72 @@
       }
 
       if (rol === 'maestro') {
+        // Función para actualizar el preview del nombre del grupo para maestro
+        function actualizarPreviewGrupoMaestro() {
+          const nivel = document.getElementById('regMaestroNivel')?.value || 'primaria';
+          const grado = document.getElementById('regMaestroGrado')?.value || '1';
+          const seccion = document.getElementById('regMaestroSeccion')?.value || 'A';
+          const nivelCapitalizado = nivel.charAt(0).toUpperCase() + nivel.slice(1);
+          const nombreGenerado = `${nivelCapitalizado} ${grado}° ${seccion}`;
+          const previewEl = document.getElementById('nombreGrupoMaestroGenerado');
+          if (previewEl) previewEl.textContent = nombreGenerado;
+        }
+
         const grupoSelect = document.getElementById('regMaestroGrupoSelect');
         if (grupoSelect) {
           grupoSelect.addEventListener('change', (e) => {
-            document.getElementById('asignaturasSeleccion').style.display = e.target.value ? 'block' : 'none';
+            const valor = e.target.value;
+            const nuevoGrupoFields = document.getElementById('nuevoGrupoMaestroFields');
+            const asignaturasSeleccion = document.getElementById('asignaturasSeleccion');
+            
+            if (valor === 'nuevo') {
+              // Mostrar formulario para crear nuevo grupo
+              nuevoGrupoFields.style.display = 'block';
+              asignaturasSeleccion.style.display = 'block';
+              actualizarPreviewGrupoMaestro();
+            } else if (valor) {
+              // Grupo existente seleccionado
+              nuevoGrupoFields.style.display = 'none';
+              asignaturasSeleccion.style.display = 'block';
+            } else {
+              // Sin grupo
+              nuevoGrupoFields.style.display = 'none';
+              asignaturasSeleccion.style.display = 'none';
+            }
           });
         }
+
+        // Listeners para actualizar preview del nuevo grupo
+        ['regMaestroNivel', 'regMaestroGrado', 'regMaestroSeccion'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.addEventListener('change', actualizarPreviewGrupoMaestro);
+        });
       }
     }
+
+    // Función para agregar nueva asignatura al vuelo
+    window.agregarNuevaAsignatura = function() {
+      const input = document.getElementById('regNuevaAsignatura');
+      const nombre = input?.value?.trim();
+      if (!nombre) {
+        showToast('Escribe el nombre de la asignatura', 'warning');
+        return;
+      }
+
+      // Agregar checkbox de la nueva asignatura
+      const checkboxesContainer = document.getElementById('asignaturasCheckboxes');
+      const nuevoId = 'nueva_' + Date.now();
+      const nuevoCheckbox = document.createElement('label');
+      nuevoCheckbox.style.cssText = 'display: flex; align-items: center; gap: 5px; background: var(--accent-color); padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; color: white;';
+      nuevoCheckbox.innerHTML = `
+        <input type="checkbox" class="asignaturaCheck" value="${nuevoId}" data-nueva="${nombre}" checked>
+        ${nombre} <span style="font-size: 10px;">(nueva)</span>
+      `;
+      checkboxesContainer.appendChild(nuevoCheckbox);
+      
+      input.value = '';
+      showToast(`Asignatura "${nombre}" agregada`, 'success');
+    };
 
     function setupAutocompleteRegister(inputId, suggestionsId, endpoint, onSelect) {
       const input = document.getElementById(inputId);
@@ -3877,7 +5342,10 @@
         nombre_completo,
         email: email || null,
         password,
-        rol
+        rol,
+        // Datos del usuario que está registrando (para validación de permisos)
+        id_registrador: idUsuarioActual,
+        id_registrador_rol: currentRole
       };
 
       // ===== DATOS ESPECÍFICOS DE ALUMNO =====
@@ -3934,16 +5402,63 @@
 
       // ===== DATOS ESPECÍFICOS DE MAESTRO =====
       if (rol === 'maestro') {
-        if (gruposSeleccionadosMaestro.length > 0) {
+        const grupoSelect = document.getElementById('regMaestroGrupoSelect')?.value;
+        
+        if (grupoSelect === 'nuevo') {
+          // Crear nuevo grupo
+          const nivel = document.getElementById('regMaestroNivel')?.value || 'primaria';
+          const grado = document.getElementById('regMaestroGrado')?.value || '1';
+          const seccion = document.getElementById('regMaestroSeccion')?.value || 'A';
+          
+          const nivelCapitalizado = nivel.charAt(0).toUpperCase() + nivel.slice(1);
+          const nombreGrupoGenerado = `${nivelCapitalizado} ${grado}° ${seccion}`;
+          
+          payload.nuevo_grupo = {
+            nombre_grupo: nombreGrupoGenerado,
+            grado: parseInt(grado),
+            seccion: seccion,
+            nivel: nivel
+          };
+        } else if (grupoSelect) {
+          // Grupo existente
+          payload.id_grupo = parseInt(grupoSelect);
+        }
+
+        // ===== MATERIA PRINCIPAL =====
+        const materiaPrincipalSelect = document.getElementById('regMateriaPrincipal')?.value?.trim();
+        const materiaPrincipalNueva = document.getElementById('regMateriaPrincipalNueva')?.value?.trim();
+        
+        // Priorizar el campo de texto si tiene valor, si no usar el selector
+        const materiaPrincipal = materiaPrincipalNueva || materiaPrincipalSelect;
+        
+        if (materiaPrincipal) {
+          payload.materia_principal = materiaPrincipal;
+        }
+
+        // Asignaturas adicionales seleccionadas
+        const asignaturasChecked = document.querySelectorAll('.asignaturaCheck:checked');
+        payload.asignaturas = [];
+        payload.nuevas_asignaturas = [];
+        
+        if (asignaturasChecked.length > 0) {
+          asignaturasChecked.forEach(checkbox => {
+            const nuevaAsignatura = checkbox.dataset.nueva;
+            if (nuevaAsignatura) {
+              // Es una asignatura nueva creada al vuelo
+              payload.nuevas_asignaturas.push({ nombre_asignatura: nuevaAsignatura });
+            } else {
+              // Es una asignatura existente
+              payload.asignaturas.push(parseInt(checkbox.value));
+            }
+          });
+        }
+
+        // Soporte legacy para grupos múltiples
+        if (gruposSeleccionadosMaestro && gruposSeleccionadosMaestro.length > 0) {
           payload.grupos_asignados = gruposSeleccionadosMaestro.map(g => ({
             id_grupo: g.id_grupo,
             asignaturas: g.asignaturas
           }));
-        }
-
-        const nuevaAsignatura = document.getElementById('regNuevaAsignatura')?.value.trim();
-        if (nuevaAsignatura) {
-          payload.nuevas_asignaturas = [{ nombre_asignatura: nuevaAsignatura }];
         }
       }
 
@@ -3966,9 +5481,42 @@
         if (data.tutorId) {
           mensaje += ' También se registró el tutor.';
         }
+        if (payload.nuevo_grupo) {
+          mensaje += ` Grupo "${payload.nuevo_grupo.nombre_grupo}" creado.`;
+        }
+        if (payload.materia_principal) {
+          mensaje += ` Materia: ${payload.materia_principal}.`;
+        }
         
         showToast(mensaje, 'success');
         closeModal('registerModal');
+        
+        // Recargar cache de grupos si se creó uno nuevo
+        if (payload.nuevo_grupo) {
+          try {
+            const gruposRes = await fetch(`${API_URL}/api/usuarios/escuela/${datosUsuarioActual?.id_escuela || 1}/todos-grupos`);
+            if (gruposRes.ok) {
+              const gruposData = await gruposRes.json();
+              gruposCache = Array.isArray(gruposData) ? gruposData : [];
+            }
+          } catch (e) {
+            console.log('Error recargando grupos:', e);
+          }
+        }
+        
+        // Recargar cache de asignaturas si se creó una nueva materia
+        if (payload.materia_principal || (payload.nuevas_asignaturas && payload.nuevas_asignaturas.length > 0)) {
+          try {
+            const asigRes = await fetch(`${API_URL}/api/consultas/asignaturas/${datosUsuarioActual?.id_escuela || 1}`);
+            if (asigRes.ok) {
+              const asigData = await asigRes.json();
+              asignaturasCache = Array.isArray(asigData) ? asigData : [];
+            }
+          } catch (e) {
+            console.log('Error recargando asignaturas:', e);
+          }
+        }
+        
         renderRegisterForm();
 
       } catch (err) {
@@ -4081,6 +5629,8 @@
             showToast('Recogida aprobada ✅', 'success');
             const notifElement = document.querySelector(`.notification-item[data-id="${notificationId}"]`);
             if (notifElement) { notifElement.style.opacity = '0.5'; notifElement.style.pointerEvents = 'none'; setTimeout(() => notifElement.remove(), 400); }
+            // Agregar al historial visual con estado correcto
+            addToHistorialVisual(notificationId, studentName, parentName, 'aprobada');
             return;
           } else {
             const error = await response.json();
@@ -4166,11 +5716,15 @@
           
           // Remover la notificación de la UI
           const notifElement = document.querySelector(`.notification-item[data-id="${notificationId}"]`);
+          // Obtener datos del estudiante y padre antes de remover
+          const studentNameFromNotif = notifElement?.querySelector('.notification-content')?.textContent || '';
           if (notifElement) {
             notifElement.style.opacity = '0.5';
             notifElement.style.pointerEvents = 'none';
             setTimeout(() => notifElement.remove(), 500);
           }
+          // Agregar al historial visual con estado correcto
+          addToHistorialVisual(notificationId, nombreRecoge, '', 'aprobada', nombreRecoge, parentescoRecoge);
         } else {
           const error = await response.json();
           showToast(error.error || 'Error al aprobar recogida', 'error');
@@ -4205,6 +5759,8 @@
             notifElement.style.pointerEvents = 'none';
             setTimeout(() => notifElement.remove(), 500);
           }
+          // Agregar al historial visual con estado correcto
+          addToHistorialVisual(notificationId, '', '', 'rechazada');
         } else {
           const error = await response.json();
           showToast(error.error || 'Error al rechazar recogida', 'error');
@@ -4213,6 +5769,45 @@
         console.error('Error al rechazar recogida:', error);
         showToast('Error al rechazar recogida', 'error');
       }
+    }
+
+    // Función para agregar registro al historial visual inmediatamente
+    function addToHistorialVisual(notificationId, studentName, parentName, estado, personaRecoge = null, parentescoRecoge = null) {
+      const historialContainer = document.querySelector('.historial-container');
+      if (!historialContainer) return;
+      
+      // Remover mensaje de "no hay registros" si existe
+      const noHistorial = historialContainer.querySelector('.no-historial');
+      if (noHistorial) noHistorial.remove();
+      
+      const time = new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+      const estadoIcon = estado === 'aprobada' ? '✅' : '❌';
+      const estadoText = estado === 'aprobada' ? 'Aprobada' : 'Rechazada';
+      const estadoClass = estado === 'aprobada' ? 'historial-aprobada' : 'historial-rechazada';
+      
+      let personaRecogeHtml = '';
+      if (personaRecoge) {
+        personaRecogeHtml = `<div class="historial-persona"><i class="fas fa-user"></i> Recogió: <strong>${personaRecoge}</strong>`;
+        if (parentescoRecoge) personaRecogeHtml += ` (${parentescoRecoge})`;
+        personaRecogeHtml += `</div>`;
+      }
+      
+      const newItem = document.createElement('div');
+      newItem.className = `historial-item ${estadoClass}`;
+      newItem.innerHTML = `
+        <div class="historial-header">
+          <span class="historial-estado">${estadoIcon} ${estadoText}</span>
+          <span class="historial-time">${time}</span>
+        </div>
+        <div class="historial-content">
+          <div class="historial-detalles">Solicitud ${estado}</div>
+        </div>
+        ${personaRecogeHtml}
+        <div class="historial-aprobador"><i class="fas fa-user-check"></i> ${datosUsuarioActual?.nombre_completo || 'Tú'}</div>
+      `;
+      
+      // Insertar al principio del historial
+      historialContainer.insertBefore(newItem, historialContainer.firstChild);
     }
 
     function showChildOptions(childName) {
@@ -6099,6 +7694,7 @@
       const emailEl = document.getElementById('profileEmail');
       const currentPwdEl = document.getElementById('profileCurrentPassword');
       const newPwdEl = document.getElementById('profileNewPassword');
+      const assignmentEl = document.getElementById('profileAssignment');
 
       if (!idUsuarioActual) {
         showToast('Usuario no identificado. Vuelve a iniciar sesión.', 'error');
@@ -6108,10 +7704,38 @@
       const email = emailEl ? emailEl.value.trim() : '';
       const currentPassword = currentPwdEl ? currentPwdEl.value : '';
       const newPassword = newPwdEl ? newPwdEl.value : '';
+      const assignment = assignmentEl ? assignmentEl.value.trim() : '';
+      
+      // Determinar si puede editar asignación y credenciales
+      const puedeEditarAsignacion = currentRole === 'maestro' || currentRole === 'admin';
+      // Todos los usuarios pueden editar su email y contraseña
+      const puedeEditarCredenciales = true;
 
       try {
-        // 1) Actualizar correo si cambió
-        if (email && datosUsuarioActual && email !== datosUsuarioActual.email) {
+        // 0) Actualizar asignación si es maestro o admin y cambió
+        if (puedeEditarAsignacion && assignment && datosUsuarioActual && assignment !== datosUsuarioActual.asignacion) {
+          const respAsig = await fetch(`${API_URL}/api/usuarios/${idUsuarioActual}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ asignacion: assignment })
+          });
+
+          const asigData = await respAsig.json();
+          if (!respAsig.ok) throw new Error(asigData.error || asigData.message || 'Error actualizando asignación');
+
+          // Actualizar sesión local
+          datosUsuarioActual.asignacion = assignment;
+          datosUsuarioActual.asignacion_calculada = assignment;
+          if (localStorage.getItem('escolarfam_sesion')) {
+            const s = JSON.parse(localStorage.getItem('escolarfam_sesion'));
+            s.datos = datosUsuarioActual;
+            localStorage.setItem('escolarfam_sesion', JSON.stringify(s));
+          }
+          showToast('Asignación actualizada ✅', 'success');
+        }
+
+        // 1) Actualizar correo si cambió (solo para maestros y admin)
+        if (puedeEditarCredenciales && email && datosUsuarioActual && email !== datosUsuarioActual.email) {
           const resp = await fetch(`${API_URL}/api/usuarios/${idUsuarioActual}/email`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
@@ -6131,8 +7755,8 @@
           showToast('Correo actualizado ✅', 'success');
         }
 
-        // 2) Cambiar contraseña si el usuario suministró nueva contraseña
-        if (newPassword) {
+        // 2) Cambiar contraseña si el usuario suministró nueva contraseña (solo para maestros y admin)
+        if (puedeEditarCredenciales && newPassword) {
           if (!currentPassword) {
             showToast('Ingresa la contraseña actual para cambiar a una nueva', 'error');
             return;
@@ -6629,18 +8253,22 @@
           speechSynthesis.speak(utterance);
         }, 800);
         
-        // Enviar también al cerebro del director
-        await fetch(API_URL + '/api/avisos/reproducir', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            studentName: studentName,
-            solicitudId: solicitudId,
-            maestroId: idUsuarioActual,
-            mensaje: mensaje,
-            grupoInfo: grupoInfo
-          })
-        });
+        // Enviar también al cerebro del director (opcional, puede no existir el endpoint)
+        try {
+          await fetch(API_URL + '/api/avisos/reproducir', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              studentName: studentName,
+              solicitudId: solicitudId,
+              maestroId: idUsuarioActual,
+              mensaje: mensaje,
+              grupoInfo: grupoInfo
+            })
+          });
+        } catch (e) {
+          // Ignorar si el endpoint no existe
+        }
         
         showToast(`🔊 ${mensaje}`, 'info');
         
@@ -7209,7 +8837,7 @@
       `;
     }
 
-    function showInfoModal(person) {
+    async function showInfoModal(person) {
       const modal = document.getElementById('friendsModal');
       const modalContent = modal.querySelector('.modal-content');
       
@@ -7217,59 +8845,138 @@
       if (typeof person === 'string') {
         person = findPersonByName(person);
       }
+
+      // Mostrar loading mientras carga
+      modalContent.innerHTML = `
+        <div class="modal-header">
+          <div class="modal-title">Información del Usuario</div>
+          <button class="modal-close" onclick="closeModal('friendsModal')">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        <div class="info-content" style="text-align: center; padding: 40px;">
+          <i class="fas fa-spinner fa-spin" style="font-size: 40px; color: #FF6B35;"></i>
+          <p>Cargando información...</p>
+        </div>
+      `;
+      modal.classList.add('show');
+
+      // Obtener datos completos del usuario si tiene ID
+      let userData = person;
+      if (person.id) {
+        try {
+          const response = await fetch(`${API_URL}/api/usuarios/${person.id}`);
+          if (response.ok) {
+            const data = await response.json();
+            userData = { ...person, ...data };
+          }
+        } catch (error) {
+          console.error('Error obteniendo datos del usuario:', error);
+        }
+      }
       
-      const fotoContent = person.foto ? 
-        `<img src="${person.foto}" alt="${person.name}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;">` :
-        person.emoji;
+      // Determinar foto/avatar
+      const foto = userData.foto_perfil || userData.foto;
+      const fotoContent = foto 
+        ? `<img src="${foto}" alt="${userData.nombre_completo || userData.name}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;">`
+        : (userData.emoji || getEmojiByRole(userData.rol));
       
-      const rolTexto = person.rol === 'admin' ? 'Director' : 
-                       person.rol === 'maestro' ? 'Maestro' : 
-                       person.subject || person.role || 'Usuario';
+      // Determinar nombre
+      const nombre = userData.nombre_completo || userData.name || 'Usuario';
+      
+      // Determinar rol
+      const rolTexto = userData.rol === 'admin' ? 'Director' : 
+                       userData.rol === 'maestro' ? 'Maestro' : 
+                       userData.rol === 'padre' ? 'Padre/Tutor' :
+                       userData.rol === 'alumno' ? 'Alumno' :
+                       userData.subject || userData.role || 'Usuario';
+      
+      // Formatear último acceso
+      let ultimoAcceso = 'No disponible';
+      if (userData.ultimo_acceso) {
+        const fecha = new Date(userData.ultimo_acceso);
+        const ahora = new Date();
+        const diff = ahora - fecha;
+        const minutos = Math.floor(diff / 60000);
+        const horas = Math.floor(diff / 3600000);
+        const dias = Math.floor(diff / 86400000);
+        
+        if (minutos < 1) ultimoAcceso = 'Ahora mismo';
+        else if (minutos < 60) ultimoAcceso = `Hace ${minutos} minuto${minutos > 1 ? 's' : ''}`;
+        else if (horas < 24) ultimoAcceso = `Hace ${horas} hora${horas > 1 ? 's' : ''}`;
+        else ultimoAcceso = `Hace ${dias} día${dias > 1 ? 's' : ''}`;
+      }
+
+      // Formatear fecha de registro
+      let fechaRegistro = 'No disponible';
+      if (userData.fecha_registro) {
+        fechaRegistro = new Date(userData.fecha_registro).toLocaleDateString('es-MX', {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric'
+        });
+      }
       
       modalContent.innerHTML = `
         <div class="modal-header">
-          <div class="modal-title">Información del Personal</div>
+          <div class="modal-title"><i class="fas fa-user-circle"></i> Información del Usuario</div>
           <button class="modal-close" onclick="closeModal('friendsModal')">
             <i class="fas fa-times"></i>
           </button>
         </div>
         <div class="info-content">
           <div class="info-photo">${fotoContent}</div>
-          <div class="info-name">${person.name}</div>
+          <div class="info-name">${nombre}</div>
+          <div class="info-role-badge role-${userData.rol || 'usuario'}">${rolTexto}</div>
           <div class="info-details">
+            ${userData.email ? `
             <div class="info-item">
-              <span class="info-label">Rol:</span>
-              <span class="info-value">${rolTexto}</span>
-            </div>
-            ${person.email ? `
-            <div class="info-item">
-              <span class="info-label">Email:</span>
-              <span class="info-value">${person.email}</span>
+              <span class="info-label"><i class="fas fa-envelope"></i> Email:</span>
+              <span class="info-value">${userData.email}</span>
             </div>
             ` : ''}
-            ${person.asignacion ? `
+            ${userData.asignacion ? `
             <div class="info-item">
-              <span class="info-label">Asignación:</span>
-              <span class="info-value">${person.asignacion}</span>
+              <span class="info-label"><i class="fas fa-users"></i> Grupo:</span>
+              <span class="info-value">${userData.asignacion}</span>
             </div>
             ` : ''}
             <div class="info-item">
-              <span class="info-label">Estado:</span>
-              <span class="info-value">Activo</span>
+              <span class="info-label"><i class="fas fa-circle ${userData.activo !== false ? 'text-success' : 'text-danger'}"></i> Estado:</span>
+              <span class="info-value">${userData.activo !== false ? 'Activo' : 'Inactivo'}</span>
             </div>
             <div class="info-item">
-              <span class="info-label">Último acceso:</span>
-              <span class="info-value">Hace 5 minutos</span>
+              <span class="info-label"><i class="fas fa-clock"></i> Último acceso:</span>
+              <span class="info-value">${ultimoAcceso}</span>
             </div>
             <div class="info-item">
-              <span class="info-label">Contacto:</span>
-              <span class="info-value">Disponible</span>
+              <span class="info-label"><i class="fas fa-calendar-alt"></i> Registro:</span>
+              <span class="info-value">${fechaRegistro}</span>
             </div>
+          </div>
+          <div class="info-actions" style="margin-top: 20px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
+            ${userData.id && userData.id !== idUsuarioActual ? `
+              <button class="btn-primary" onclick="closeModal('friendsModal'); openChatById(${userData.id}, '${nombre.replace(/'/g, "\\'")}')">
+                <i class="fas fa-comment"></i> Mensaje
+              </button>
+            ` : ''}
+            <button class="btn-secondary" onclick="closeModal('friendsModal')">
+              <i class="fas fa-times"></i> Cerrar
+            </button>
           </div>
         </div>
       `;
-      
-      modal.classList.add('show');
+    }
+
+    // Función auxiliar para obtener emoji por rol
+    function getEmojiByRole(rol) {
+      const emojis = {
+        'admin': '👔',
+        'maestro': '👩‍🏫',
+        'padre': '👨‍👩‍👧',
+        'alumno': '👦'
+      };
+      return emojis[rol] || '👤';
     }
 
     function showTicketModal(director) {
@@ -7351,16 +9058,26 @@
         return;
       }
       
+      // Mapear asunto a categoría
+      const categoriaMap = {
+        'Problema técnico': 'tecnico',
+        'Consulta académica': 'academico',
+        'Trámite administrativo': 'administrativo',
+        'Sugerencia': 'general',
+        'Otro': 'general'
+      };
+      
       try {
-        const response = await fetch(API_URL + '/api/usuarios/tickets', {
+        const response = await fetch(API_URL + '/api/consultas', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            id_remitente: idUsuarioActual,
-            id_destinatario: directorId,
-            asunto,
-            prioridad,
-            descripcion
+            id_usuario: idUsuarioActual,
+            id_escuela: datosUsuarioActual?.id_escuela || 1,
+            asunto: asunto,
+            contenido: descripcion,
+            categoria: categoriaMap[asunto] || 'general',
+            prioridad: prioridad
           })
         });
         
@@ -7545,7 +9262,7 @@
       }
     }
 
-    function showInfoModal() {
+    function showSystemInfoModal() {
       document.getElementById('infoModal').classList.add('show');
     }
 
@@ -7605,8 +9322,8 @@
       // Botón de tema en login
       document.getElementById('themeBtn').addEventListener('click', toggleTheme);
       
-      // Botón de información
-      document.getElementById('infoBtn').addEventListener('click', showInfoModal);
+      // Botón de información del sistema
+      document.getElementById('infoBtn').addEventListener('click', showSystemInfoModal);
       
       // Formulario de login - Conectar con la BD
       document.getElementById('loginForm').addEventListener('submit', async (e) => {

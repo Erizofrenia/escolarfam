@@ -376,6 +376,11 @@
     VARIABLES GLOBALES NECESARIAS
     ========================================
     */
+    
+    // URL base de la API - cambiar para producción
+    const API_URL = '';
+    // const API_URL = ''; // Para desarrollo local
+    
     let datosUsuarioActual = null;
     let idUsuarioActual = null;      // Se obtiene al hacer login
     let idEscuelaActual = null;      // Se obtiene del usuario logueado
@@ -556,10 +561,10 @@
         // Diferenciar entre maestro y director
         if (rolUsuarioActual === 'admin') {
           // Director: obtener todos los grupos de la escuela
-          response = await fetch(`/api/usuarios/escuela/${datosUsuarioActual.id_escuela}/todos-grupos`);
+          response = await fetch(`${API_URL}/api/usuarios/escuela/${datosUsuarioActual.id_escuela}/todos-grupos`);
         } else {
           // Maestro: obtener solo grupos asignados
-          response = await fetch(`/api/usuarios/${idUsuarioActual}/grupos-asignados`);
+          response = await fetch(`${API_URL}/api/usuarios/${idUsuarioActual}/grupos-asignados`);
         }
         
         const data = await response.json();
@@ -649,7 +654,7 @@
     async function renderStudentGroupScreen() {
       try {
         // Obtener el grupo del alumno actual
-        const grupoResponse = await fetch(`/api/usuarios/${idUsuarioActual}/grupo`);
+        const grupoResponse = await fetch(`${API_URL}/api/usuarios/${idUsuarioActual}/grupo`);
         if (!grupoResponse.ok) {
           return `
             <div class="tree-screen">
@@ -726,7 +731,7 @@
     async function renderGroupTree(idGrupo, nombreGrupo) {
       try {
         // Obtener estudiantes del grupo desde la base de datos
-        const response = await fetch(`/api/usuarios/grupos/${idGrupo}/estudiantes`);
+        const response = await fetch(`${API_URL}/api/usuarios/grupos/${idGrupo}/estudiantes`);
         const { estudiantes } = await response.json();
 
         if (!estudiantes || estudiantes.length === 0) {
@@ -831,7 +836,7 @@
     async function renderTeachersTree() {
       try {
         // Obtener personal docente desde la base de datos
-        const response = await fetch(`/api/usuarios/escuela/${datosUsuarioActual.id_escuela}/personal-docente`);
+        const response = await fetch(`${API_URL}/api/usuarios/escuela/${datosUsuarioActual.id_escuela}/personal-docente`);
         const { personal } = await response.json();
 
         if (!personal || personal.length === 0) {
@@ -1068,8 +1073,8 @@
       
       try {
         const [statsResponse, logsResponse] = await Promise.all([
-          fetch(`/api/config/escuela/${datosUsuarioActual.id_escuela}/logs/stats`),
-          fetch(`/api/config/escuela/${datosUsuarioActual.id_escuela}/logs?limit=100`)
+          fetch(`${API_URL}/api/config/escuela/${datosUsuarioActual.id_escuela}/logs/stats`),
+          fetch(`${API_URL}/api/config/escuela/${datosUsuarioActual.id_escuela}/logs?limit=100`)
         ]);
         
         if (statsResponse.ok) stats = await statsResponse.json();
@@ -1335,7 +1340,7 @@
       const categoriaParam = brainCurrentCategoria !== 'todos' ? `&categoria=${brainCurrentCategoria}` : '';
       
       try {
-        const response = await fetch(`/api/config/escuela/${datosUsuarioActual.id_escuela}/logs?limit=100&offset=${offset}${categoriaParam}`);
+        const response = await fetch(`${API_URL}/api/config/escuela/${datosUsuarioActual.id_escuela}/logs?limit=100&offset=${offset}${categoriaParam}`);
         if (!response.ok) throw new Error('Error al cargar logs');
         
         const logs = await response.json();
@@ -1461,7 +1466,7 @@
       if (!confirm('¿Estás seguro de eliminar los logs con más de 30 días de antigüedad?')) return;
       
       try {
-        const response = await fetch(`/api/config/escuela/${datosUsuarioActual.id_escuela}/logs`, {
+        const response = await fetch(`${API_URL}/api/config/escuela/${datosUsuarioActual.id_escuela}/logs`, {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ dias_antiguedad: 30 })
@@ -1500,7 +1505,7 @@
         let schoolFormContent = '';
         try {
           console.log('🔍 Cargando datos de escuela ID:', datosUsuarioActual.id_escuela);
-          const response = await fetch(`/api/escuelas/${datosUsuarioActual.id_escuela}`);
+          const response = await fetch(`${API_URL}/api/escuelas/${datosUsuarioActual.id_escuela}`);
           
           if (response.ok) {
             const escuela = await response.json();
@@ -1675,7 +1680,7 @@
       // Cargar solicitudes de recogida pendientes para maestros
       if (currentRole === 'maestro' && idUsuarioActual) {
         try {
-          const response = await fetch(`/api/recogidas/maestro/${idUsuarioActual}`);
+          const response = await fetch(`${API_URL}/api/recogidas/maestro/${idUsuarioActual}`);
           if (response.ok) {
             const solicitudes = await response.json();
             notifications = solicitudes.map(sol => {
@@ -1712,7 +1717,7 @@
 
         // Cargar historial del día (aprobados/rechazados)
         try {
-          const response = await fetch(`/api/recogidas/historial/${idUsuarioActual}`);
+          const response = await fetch(`${API_URL}/api/recogidas/historial/${idUsuarioActual}`);
           if (response.ok) {
             historial = await response.json();
           }
@@ -1807,7 +1812,7 @@
         // Cargar hijos reales desde la BD
         if (idUsuarioActual) {
           try {
-            const response = await fetch(`/api/usuarios/${idUsuarioActual}/hijos`);
+            const response = await fetch(`${API_URL}/api/usuarios/${idUsuarioActual}/hijos`);
             if (response.ok) {
               const hijosData = await response.json();
               children = hijosData.map(hijo => ({
@@ -1831,7 +1836,7 @@
         // Cargar padres reales desde la BD
         if (idUsuarioActual) {
           try {
-            const response = await fetch(`/api/usuarios/${idUsuarioActual}/padres`);
+            const response = await fetch(`${API_URL}/api/usuarios/${idUsuarioActual}/padres`);
             if (response.ok) {
               const padresData = await response.json();
               children = padresData.map(padre => ({
@@ -1911,7 +1916,7 @@
       
       try {
         // Cargar maestros y admins desde la BD
-        const response = await fetch('/api/usuarios/staff/directorio');
+        const response = await fetch(API_URL + '/api/usuarios/staff/directorio');
         if (response.ok) {
           staff = await response.json();
         }
@@ -1969,7 +1974,7 @@
       // Si es padre, cargar hijos reales desde la BD
       if (currentRole === 'padre' && idUsuarioActual) {
         try {
-          const response = await fetch(`/api/usuarios/${idUsuarioActual}/hijos`);
+          const response = await fetch(`${API_URL}/api/usuarios/${idUsuarioActual}/hijos`);
           if (response.ok) {
             const data = await response.json();
             children = data.map(hijo => ({
@@ -1983,7 +1988,7 @@
             // Cargar solicitudes pendientes para cada hijo
             for (const child of children) {
               try {
-                const solResponse = await fetch(`/api/recogidas/hijo/${child.id}`);
+                const solResponse = await fetch(`${API_URL}/api/recogidas/hijo/${child.id}`);
                 if (solResponse.ok) {
                   const solicitudes = await solResponse.json();
                   const pendiente = solicitudes.find(s => s.estado === 'pendiente');
@@ -1996,7 +2001,7 @@
           }
 
           // Cargar personas de confianza
-          const pcResponse = await fetch(`/api/personas-confianza/${idUsuarioActual}`);
+          const pcResponse = await fetch(`${API_URL}/api/personas-confianza/${idUsuarioActual}`);
           if (pcResponse.ok) {
             personasConfianza = await pcResponse.json();
           }
@@ -2075,7 +2080,7 @@
       if (idUsuarioActual) {
         try {
           // Cargar conversaciones reales desde la BD
-          const response = await fetch(`/api/mensajes/conversaciones/${idUsuarioActual}`);
+          const response = await fetch(`${API_URL}/api/mensajes/conversaciones/${idUsuarioActual}`);
           if (response.ok) {
             const conversaciones = await response.json();
             
@@ -2287,9 +2292,9 @@
       
       try {
         const [ticketsRes, statsRes, archivadosRes] = await Promise.all([
-          fetch(`/api/consultas/escuela/${datosUsuarioActual.id_escuela}?archivados=false`),
-          fetch(`/api/consultas/escuela/${datosUsuarioActual.id_escuela}/stats`),
-          fetch(`/api/consultas/escuela/${datosUsuarioActual.id_escuela}?archivados=true`)
+          fetch(`${API_URL}/api/consultas/escuela/${datosUsuarioActual.id_escuela}?archivados=false`),
+          fetch(`${API_URL}/api/consultas/escuela/${datosUsuarioActual.id_escuela}/stats`),
+          fetch(`${API_URL}/api/consultas/escuela/${datosUsuarioActual.id_escuela}?archivados=true`)
         ]);
         
         if (ticketsRes.ok) ticketsData = await ticketsRes.json();
@@ -2499,7 +2504,7 @@
     // Abrir modal de ticket con detalles y opción de responder
     window.openTicketModal = async function(id) {
       try {
-        const response = await fetch(`/api/consultas/${id}`);
+        const response = await fetch(`${API_URL}/api/consultas/${id}`);
         if (!response.ok) throw new Error('Error al cargar ticket');
         const ticket = await response.json();
         
@@ -2569,7 +2574,7 @@
       
       try {
         // 1. Guardar respuesta en el ticket
-        const ticketResponse = await fetch(`/api/consultas/${ticketId}/responder`, {
+        const ticketResponse = await fetch(`${API_URL}/api/consultas/${ticketId}/responder`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -2582,7 +2587,7 @@
         
         // 2. Enviar mensaje al usuario (no responder)
         const ticket = ticketsData.find(t => t.id_ticket === ticketId);
-        await fetch('/api/mensajes', {
+        await fetch(API_URL + '/api/mensajes', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -2607,7 +2612,7 @@
       if (!confirm('¿Archivar este ticket?')) return;
       
       try {
-        const response = await fetch(`/api/consultas/${id}/archivar`, {
+        const response = await fetch(`${API_URL}/api/consultas/${id}/archivar`, {
           method: 'PUT'
         });
         
@@ -2626,7 +2631,7 @@
       if (!confirm('¿Eliminar este ticket permanentemente?')) return;
       
       try {
-        const response = await fetch(`/api/consultas/${id}`, {
+        const response = await fetch(`${API_URL}/api/consultas/${id}`, {
           method: 'DELETE'
         });
         
@@ -2681,7 +2686,7 @@
 
     window.restoreTicket = async function(id) {
       try {
-        const response = await fetch(`/api/consultas/${id}/estado`, {
+        const response = await fetch(`${API_URL}/api/consultas/${id}/estado`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ estado: 'abierto' })
@@ -2701,7 +2706,7 @@
       if (!confirm('¿Eliminar este ticket permanentemente?')) return;
       
       try {
-        const response = await fetch(`/api/consultas/${id}`, {
+        const response = await fetch(`${API_URL}/api/consultas/${id}`, {
           method: 'DELETE'
         });
         
@@ -2719,7 +2724,7 @@
       try {
         showToast('Generando CSV...', 'info');
         
-        const response = await fetch(`/api/consultas/escuela/${datosUsuarioActual.id_escuela}/export`);
+        const response = await fetch(`${API_URL}/api/consultas/escuela/${datosUsuarioActual.id_escuela}/export`);
         if (!response.ok) throw new Error('Error al exportar');
         
         const tickets = await response.json();
@@ -3357,8 +3362,8 @@
       // Cargar datos necesarios
       try {
         const [gruposRes, asignaturasRes] = await Promise.all([
-          fetch('/api/auth/grupos/all'),
-          fetch('/api/auth/asignaturas/all')
+          fetch(API_URL + '/api/auth/grupos/all'),
+          fetch(API_URL + '/api/auth/asignaturas/all')
         ]);
         gruposCache = await gruposRes.json();
         asignaturasCache = await asignaturasRes.json();
@@ -3642,7 +3647,7 @@
           
           debounceTimer = setTimeout(async () => {
             try {
-              const res = await fetch(`/api/auth/check-username/${encodeURIComponent(username)}`);
+              const res = await fetch(`${API_URL}/api/auth/check-username/${encodeURIComponent(username)}`);
               const data = await res.json();
               statusEl.innerHTML = data.available 
                 ? '<span style="color: #4CAF50;">✓ Disponible</span>'
@@ -3944,7 +3949,7 @@
 
       // Enviar registro
       try {
-        const res = await fetch('/api/auth/register', {
+        const res = await fetch(API_URL + '/api/auth/register', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
@@ -4017,7 +4022,7 @@
           const formData = new FormData();
           formData.append('foto', file);
           
-          const response = await fetch(`/api/usuarios/${idUsuarioActual}/upload-foto`, {
+          const response = await fetch(`${API_URL}/api/usuarios/${idUsuarioActual}/upload-foto`, {
             method: 'POST',
             body: formData
           });
@@ -4067,7 +4072,7 @@
       if (!personaSugerida) {
         console.log('📝 Aprobación directa (sin persona alternativa)');
         try {
-          const response = await fetch(`/api/recogidas/${notificationId}/aprobar`, {
+          const response = await fetch(`${API_URL}/api/recogidas/${notificationId}/aprobar`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ id_aprobador: idUsuarioActual })
@@ -4145,7 +4150,7 @@
       }
 
       try {
-        const response = await fetch(`/api/recogidas/${notificationId}/aprobar`, {
+        const response = await fetch(`${API_URL}/api/recogidas/${notificationId}/aprobar`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -4182,7 +4187,7 @@
       }
 
       try {
-        const response = await fetch(`/api/recogidas/${notificationId}/rechazar`, {
+        const response = await fetch(`${API_URL}/api/recogidas/${notificationId}/rechazar`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -4226,7 +4231,7 @@
     window.setQuickPerson = async function(childId, personaId, childName, nombrePersona, parentesco) {
       try {
         // Verificar si ya existe solicitud pendiente
-        const checkResponse = await fetch(`/api/recogidas/hijo/${childId}`);
+        const checkResponse = await fetch(`${API_URL}/api/recogidas/hijo/${childId}`);
         let solicitudExistente = null;
         
         if (checkResponse.ok) {
@@ -4237,7 +4242,7 @@
         if (personaId === 'yo') {
           // Si selecciona "Yo", eliminar persona_recoge de solicitud existente o crear sin persona
           if (solicitudExistente) {
-            const response = await fetch(`/api/recogidas/${solicitudExistente.id_solicitud}/actualizar-persona`, {
+            const response = await fetch(`${API_URL}/api/recogidas/${solicitudExistente.id_solicitud}/actualizar-persona`, {
               method: 'PUT',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ persona_recoge: null, parentesco_recoge: null })
@@ -4251,7 +4256,7 @@
           // Seleccionó una persona de confianza
           if (solicitudExistente) {
             // Actualizar solicitud existente
-            const response = await fetch(`/api/recogidas/${solicitudExistente.id_solicitud}/actualizar-persona`, {
+            const response = await fetch(`${API_URL}/api/recogidas/${solicitudExistente.id_solicitud}/actualizar-persona`, {
               method: 'PUT',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -4265,7 +4270,7 @@
             }
           } else {
             // Crear nueva solicitud
-            const response = await fetch('/api/recogidas', {
+            const response = await fetch(API_URL + '/api/recogidas', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -4410,7 +4415,7 @@
       const parentescoFinal = parentescoSelect === 'otro' ? parentescoOtro : parentescoSelect;
 
       try {
-        const response = await fetch('/api/personas-confianza', {
+        const response = await fetch(API_URL + '/api/personas-confianza', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -4473,7 +4478,7 @@
 
       try {
         // Verificar si ya existe una solicitud pendiente
-        const checkResponse = await fetch(`/api/recogidas/hijo/${childId}`);
+        const checkResponse = await fetch(`${API_URL}/api/recogidas/hijo/${childId}`);
         let solicitudExistente = null;
         
         if (checkResponse.ok) {
@@ -4483,7 +4488,7 @@
 
         if (solicitudExistente) {
           // Actualizar solicitud existente
-          const response = await fetch(`/api/recogidas/${solicitudExistente.id_solicitud}/actualizar-persona`, {
+          const response = await fetch(`${API_URL}/api/recogidas/${solicitudExistente.id_solicitud}/actualizar-persona`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -4502,7 +4507,7 @@
           }
         } else {
           // Crear nueva solicitud con persona alternativa
-          const response = await fetch('/api/recogidas', {
+          const response = await fetch(API_URL + '/api/recogidas', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -4542,7 +4547,7 @@
       if (!datosUsuarioActual || !datosUsuarioActual.id_escuela) return;
       
       try {
-        const response = await fetch(`/api/config/escuela/${datosUsuarioActual.id_escuela}`);
+        const response = await fetch(`${API_URL}/api/config/escuela/${datosUsuarioActual.id_escuela}`);
         if (response.ok) {
           schoolConfig = await response.json();
           applyConfigToToggles();
@@ -4637,7 +4642,7 @@
           configData[configKey] = toggle.classList.contains('active');
         });
 
-        const response = await fetch(`/api/config/escuela/${datosUsuarioActual.id_escuela}`, {
+        const response = await fetch(`${API_URL}/api/config/escuela/${datosUsuarioActual.id_escuela}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(configData)
@@ -4696,7 +4701,7 @@
 
           // Guardar archivo en el servidor
           try {
-            const response = await fetch(`/api/config/escuela/${datosUsuarioActual.id_escuela}/logo`, {
+            const response = await fetch(`${API_URL}/api/config/escuela/${datosUsuarioActual.id_escuela}/logo`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ logo_base64: e.target.result })
@@ -4740,7 +4745,7 @@
       }
 
       try {
-        const response = await fetch(`/api/config/escuela/${datosUsuarioActual.id_escuela}/logo`, {
+        const response = await fetch(`${API_URL}/api/config/escuela/${datosUsuarioActual.id_escuela}/logo`, {
           method: 'DELETE'
         });
 
@@ -4764,7 +4769,7 @@
       if (!datosUsuarioActual || !datosUsuarioActual.id_escuela) return;
 
       try {
-        const response = await fetch(`/api/config/escuela/${datosUsuarioActual.id_escuela}/logs?limit=100`);
+        const response = await fetch(`${API_URL}/api/config/escuela/${datosUsuarioActual.id_escuela}/logs?limit=100`);
         const logs = await response.json();
 
         const logsHtml = logs.length === 0 
@@ -4836,7 +4841,7 @@
       if (!confirm('¿Eliminar los logs con más de 30 días de antigüedad?')) return;
 
       try {
-        const response = await fetch(`/api/config/escuela/${datosUsuarioActual.id_escuela}/logs`, {
+        const response = await fetch(`${API_URL}/api/config/escuela/${datosUsuarioActual.id_escuela}/logs`, {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ dias_antiguedad: 30 })
@@ -5309,7 +5314,7 @@
         const userData = JSON.parse(qrDataString);
         
         // Obtener información adicional del usuario desde la BD
-        const response = await fetch(`/api/usuarios/${userData.id}`);
+        const response = await fetch(`${API_URL}/api/usuarios/${userData.id}`);
         if (!response.ok) throw new Error('Usuario no encontrado');
         
         const userInfo = await response.json();
@@ -5328,7 +5333,7 @@
         if (userInfo.rol === 'alumno') {
           // Obtener padres del alumno
           try {
-            const padresResp = await fetch(`/api/usuarios/${userInfo.id_usuario}/padres`);
+            const padresResp = await fetch(`${API_URL}/api/usuarios/${userInfo.id_usuario}/padres`);
             if (padresResp.ok) {
               const padres = await padresResp.json();
               if (padres.length > 0) {
@@ -5358,7 +5363,7 @@
         } else if (userInfo.rol === 'padre') {
           // Obtener hijos del padre
           try {
-            const hijosResp = await fetch(`/api/usuarios/${userInfo.id_usuario}/hijos`);
+            const hijosResp = await fetch(`${API_URL}/api/usuarios/${userInfo.id_usuario}/hijos`);
             if (hijosResp.ok) {
               const hijos = await hijosResp.json();
               if (hijos.length > 0) {
@@ -5396,7 +5401,7 @@
         if (userInfo.rol === 'alumno') {
           // Obtener padres del alumno para poder enviarles mensaje
           try {
-            const padresResp = await fetch(`/api/usuarios/${userInfo.id_usuario}/padres`);
+            const padresResp = await fetch(`${API_URL}/api/usuarios/${userInfo.id_usuario}/padres`);
             if (padresResp.ok) {
               padresDelAlumno = await padresResp.json();
             }
@@ -6107,7 +6112,7 @@
       try {
         // 1) Actualizar correo si cambió
         if (email && datosUsuarioActual && email !== datosUsuarioActual.email) {
-          const resp = await fetch(`/api/usuarios/${idUsuarioActual}/email`, {
+          const resp = await fetch(`${API_URL}/api/usuarios/${idUsuarioActual}/email`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email })
@@ -6133,7 +6138,7 @@
             return;
           }
 
-          const respPwd = await fetch('/api/auth/change-password', {
+          const respPwd = await fetch(API_URL + '/api/auth/change-password', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ id_usuario: idUsuarioActual, currentPassword, newPassword })
@@ -6167,7 +6172,7 @@
             };
 
             if (schoolData.nombre_escuela) {
-              const respSchool = await fetch(`/api/escuelas/${datosUsuarioActual.id_escuela}`, {
+              const respSchool = await fetch(`${API_URL}/api/escuelas/${datosUsuarioActual.id_escuela}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(schoolData)
@@ -6257,7 +6262,7 @@
       `;
       
       try {
-        const response = await fetch(`/api/amigos/${idUsuarioActual}`);
+        const response = await fetch(`${API_URL}/api/amigos/${idUsuarioActual}`);
         if (!response.ok) throw new Error('Error al cargar amigos');
         
         const amigos = await response.json();
@@ -6334,7 +6339,7 @@
     // Función para agregar amigo desde el QR escaneado
     window.addFriend = async function(friendId, friendName) {
       try {
-        const response = await fetch('/api/amigos/agregar', {
+        const response = await fetch(API_URL + '/api/amigos/agregar', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -6405,7 +6410,7 @@
 
     window.confirmarAsistencia = async function(idAlumno, estado, nombreAlumno) {
       try {
-        const response = await fetch('/api/asistencia', {
+        const response = await fetch(API_URL + '/api/asistencia', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -6548,7 +6553,7 @@
         // Obtener información del alumno (grupo/grado)
         let grupoInfo = '';
         try {
-          const response = await fetch(`/api/usuarios/${solicitudId}/info-recogida`);
+          const response = await fetch(`${API_URL}/api/usuarios/${solicitudId}/info-recogida`);
           if (response.ok) {
             const data = await response.json();
             grupoInfo = data.nombre_grupo || '';
@@ -6625,7 +6630,7 @@
         }, 800);
         
         // Enviar también al cerebro del director
-        await fetch('/api/avisos/reproducir', {
+        await fetch(API_URL + '/api/avisos/reproducir', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -6716,7 +6721,7 @@
       }
 
       try {
-        const response = await fetch('/api/recogidas', {
+        const response = await fetch(API_URL + '/api/recogidas', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -6840,7 +6845,7 @@
       
       try {
         // Enviar aviso usando el nuevo endpoint
-        const response = await fetch('/api/avisos', {
+        const response = await fetch(API_URL + '/api/avisos', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -6872,7 +6877,7 @@
       
       if (person.id) {
         try {
-          const response = await fetch(`/api/usuarios/${person.id}`);
+          const response = await fetch(`${API_URL}/api/usuarios/${person.id}`);
           if (response.ok) {
             userData = await response.json();
           }
@@ -6978,7 +6983,7 @@
           const formData = new FormData();
           formData.append('foto', file);
           
-          const response = await fetch(`/api/usuarios/${idHijo}/upload-foto`, {
+          const response = await fetch(`${API_URL}/api/usuarios/${idHijo}/upload-foto`, {
             method: 'POST',
             body: formData
           });
@@ -7011,7 +7016,7 @@
       try {
         // Actualizar correo si cambió
         if (email) {
-          const resp = await fetch(`/api/usuarios/${idHijo}/email`, {
+          const resp = await fetch(`${API_URL}/api/usuarios/${idHijo}/email`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email })
@@ -7030,7 +7035,7 @@
           }
 
           // Para hijos, el padre puede cambiar la contraseña directamente
-          const respPwd = await fetch(`/api/usuarios/${idHijo}`, {
+          const respPwd = await fetch(`${API_URL}/api/usuarios/${idHijo}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
@@ -7070,7 +7075,7 @@
       let contactPhoto = '👤';
       let contactRole = '';
       try {
-        const userResponse = await fetch(`/api/usuarios/${userId}`);
+        const userResponse = await fetch(`${API_URL}/api/usuarios/${userId}`);
         if (userResponse.ok) {
           const userData = await userResponse.json();
           contactRole = userData.rol || '';
@@ -7085,7 +7090,7 @@
       // Cargar mensajes
       let messagesHTML = '';
       try {
-        const response = await fetch(`/api/mensajes/${idUsuarioActual}/${userId}`);
+        const response = await fetch(`${API_URL}/api/mensajes/${idUsuarioActual}/${userId}`);
         if (response.ok) {
           const mensajes = await response.json();
           
@@ -7110,7 +7115,7 @@
           }
           
           // Marcar mensajes como leídos
-          await fetch(`/api/mensajes/marcar-leidos/${userId}/${idUsuarioActual}`, { method: 'PUT' });
+          await fetch(`${API_URL}/api/mensajes/marcar-leidos/${userId}/${idUsuarioActual}`, { method: 'PUT' });
         }
       } catch (error) {
         console.error('Error cargando mensajes:', error);
@@ -7347,7 +7352,7 @@
       }
       
       try {
-        const response = await fetch('/api/usuarios/tickets', {
+        const response = await fetch(API_URL + '/api/usuarios/tickets', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -7410,7 +7415,7 @@
       
       try {
         // Enviar mensaje a la BD
-        const response = await fetch('/api/mensajes', {
+        const response = await fetch(API_URL + '/api/mensajes', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -7612,7 +7617,7 @@
         const rememberMe = document.getElementById('rememberMe').checked;
         
         try {
-          const respuesta = await fetch('/api/auth/login', {
+          const respuesta = await fetch(API_URL + '/api/auth/login', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json'
@@ -7682,7 +7687,7 @@
       // Cargar configuración de la escuela para mostrar el logo
       if (datosUsuarioActual && datosUsuarioActual.id_escuela) {
         try {
-          const configResponse = await fetch(`/api/config/escuela/${datosUsuarioActual.id_escuela}`);
+          const configResponse = await fetch(`${API_URL}/api/config/escuela/${datosUsuarioActual.id_escuela}`);
           if (configResponse.ok) {
             schoolConfig = await configResponse.json();
             // Guardar logo en localStorage para uso en login futuro
