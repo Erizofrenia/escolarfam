@@ -8386,16 +8386,24 @@
 
     // Variable global para el contexto de audio (reutilizable)
     let globalAudioContext = null;
+    let audioInitialized = false;
     
     // Función para inicializar/reanudar el contexto de audio (necesario en Android)
     async function ensureAudioContext() {
       if (!globalAudioContext) {
-        globalAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+        try {
+          globalAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+          console.log('AudioContext creado, estado:', globalAudioContext.state);
+        } catch (e) {
+          console.error('Error creando AudioContext:', e);
+          return null;
+        }
       }
       // En Android, el contexto puede estar suspendido hasta interacción del usuario
       if (globalAudioContext.state === 'suspended') {
         try {
           await globalAudioContext.resume();
+          console.log('AudioContext resumido, nuevo estado:', globalAudioContext.state);
         } catch (e) {
           console.log('No se pudo reanudar AudioContext:', e);
         }
@@ -8409,6 +8417,12 @@
         try {
           // Obtener o crear contexto de audio
           const audioContext = await ensureAudioContext();
+          
+          if (!audioContext || audioContext.state !== 'running') {
+            console.log('AudioContext no disponible o no está corriendo');
+            resolve();
+            return;
+          }
           
           // Configuración del timbre calmado
           const duration = 0.7; // 700ms de duración
@@ -8462,6 +8476,75 @@
           resolve(); // Resolver inmediatamente si hay error
         }
       });
+    };
+
+    // Función de prueba de audio para verificar que funciona en el dispositivo
+    // Se puede llamar desde la consola con: testAudio()
+    window.testAudio = async function() {
+      console.log('=== PRUEBA DE AUDIO ===');
+      
+      // 1. Verificar AudioContext
+      console.log('1. Probando AudioContext...');
+      try {
+        const ctx = await ensureAudioContext();
+        if (ctx) {
+          console.log(`   ✅ AudioContext OK - Estado: ${ctx.state}`);
+        } else {
+          console.log('   ❌ AudioContext no disponible');
+        }
+      } catch (e) {
+        console.log('   ❌ Error en AudioContext:', e.message);
+      }
+      
+      // 2. Probar sonido de notificación
+      console.log('2. Probando sonido de notificación...');
+      try {
+        await playNotificationSound();
+        console.log('   ✅ Sonido de notificación reproducido');
+      } catch (e) {
+        console.log('   ❌ Error en sonido:', e.message);
+      }
+      
+      // 3. Verificar SpeechSynthesis
+      console.log('3. Verificando SpeechSynthesis...');
+      if (window.speechSynthesis) {
+        const voices = speechSynthesis.getVoices();
+        console.log(`   ✅ SpeechSynthesis disponible - ${voices.length} voces`);
+        const spanishVoices = voices.filter(v => v.lang.startsWith('es'));
+        console.log(`   - Voces en español: ${spanishVoices.length}`);
+        if (spanishVoices.length > 0) {
+          console.log(`   - Primera voz español: ${spanishVoices[0].name}`);
+        }
+      } else {
+        console.log('   ❌ SpeechSynthesis no disponible');
+      }
+      
+      // 4. Probar síntesis de voz
+      console.log('4. Probando síntesis de voz (dirá "Prueba de audio")...');
+      try {
+        const utterance = new SpeechSynthesisUtterance('Prueba de audio exitosa');
+        utterance.lang = 'es-ES';
+        utterance.rate = 0.9;
+        utterance.volume = 1.0;
+        
+        // Buscar voz en español
+        const voices = speechSynthesis.getVoices();
+        const spanishVoice = voices.find(v => v.lang.startsWith('es'));
+        if (spanishVoice) {
+          utterance.voice = spanishVoice;
+        }
+        
+        utterance.onend = () => console.log('   ✅ Síntesis de voz completada');
+        utterance.onerror = (e) => console.log('   ❌ Error en síntesis:', e.error);
+        
+        speechSynthesis.cancel();
+        speechSynthesis.speak(utterance);
+      } catch (e) {
+        console.log('   ❌ Error en síntesis de voz:', e.message);
+      }
+      
+      console.log('=== FIN PRUEBA DE AUDIO ===');
+      showToast('🔊 Prueba de audio ejecutada - revisa la consola', 'info');
     };
 
     // Función para reproducir aviso con texto a voz
@@ -8582,15 +8665,75 @@
         // Reproducir sonido de notificación primero
         await playNotificationSound();
         
+        // Función para hablar con reintentos (fix para bug de Android)
+        const speakWithRetry = (utterance, maxRetries = 3) => {
+          return new Promise((resolve, reject) => {
+            let retries = 0;
+            
+            const trySpeak = () => {
+              // Cancelar cualquier síntesis previa
+              speechSynthesis.cancel();
+              
+              // Pequeña pausa antes de hablar (fix para Android Chrome)
+              setTimeout(() => {
+                utterance.onend = () => {
+                  console.log('Síntesis de voz completada exitosamente');
+                  resolve();
+                };
+                
+                utterance.onerror = (event) => {
+                  console.error('Error en síntesis de voz:', event.error);
+                  retries++;
+                  if (retries < maxRetries && event.error !== 'not-allowed') {
+                    console.log(`Reintentando síntesis de voz (intento ${retries + 1}/${maxRetries})`);
+                    setTimeout(trySpeak, 500);
+                  } else {
+                    reject(new Error(event.error));
+                  }
+                };
+                
+                // Verificar que speechSynthesis esté listo
+                if (speechSynthesis.speaking) {
+                  speechSynthesis.cancel();
+                }
+                
+                // Hablar
+                speechSynthesis.speak(utterance);
+                
+                // Workaround para bug de Chrome donde la síntesis se pausa
+                // después de ~15 segundos en algunos dispositivos
+                const resumeInterval = setInterval(() => {
+                  if (!speechSynthesis.speaking) {
+                    clearInterval(resumeInterval);
+                  } else if (speechSynthesis.paused) {
+                    speechSynthesis.resume();
+                  }
+                }, 1000);
+                
+                // Timeout de seguridad
+                setTimeout(() => {
+                  clearInterval(resumeInterval);
+                  if (speechSynthesis.speaking) {
+                    speechSynthesis.cancel();
+                  }
+                  resolve(); // Resolver de todos modos después de 10 segundos
+                }, 10000);
+                
+              }, 100);
+            };
+            
+            trySpeak();
+          });
+        };
+        
         // Esperar un poco antes del anuncio del nombre
-        setTimeout(() => {
-          // Asegurar que no haya otra síntesis corriendo
-          if (speechSynthesis.speaking) {
-            speechSynthesis.cancel();
-          }
-          // Reproducir una sola vez
-          speechSynthesis.speak(utterance);
-        }, 800);
+        await new Promise(resolve => setTimeout(resolve, 800));
+        
+        try {
+          await speakWithRetry(utterance);
+        } catch (e) {
+          console.error('Síntesis de voz falló después de reintentos:', e);
+        }
         
         // Enviar también al cerebro del director (opcional, puede no existir el endpoint)
         try {
@@ -9821,26 +9964,60 @@
       // Inicializar Audio Context y SpeechSynthesis con la primera interacción del usuario
       // Esto es NECESARIO en Android para que el audio funcione
       const initAudioOnFirstInteraction = async () => {
+        if (audioInitialized) return;
+        audioInitialized = true;
+        
+        console.log('🔊 Inicializando sistema de audio...');
+        
         try {
           // Inicializar AudioContext
-          await ensureAudioContext();
-          console.log('AudioContext inicializado correctamente');
+          const ctx = await ensureAudioContext();
+          if (ctx) {
+            console.log('✅ AudioContext inicializado, estado:', ctx.state);
+          } else {
+            console.log('⚠️ AudioContext no disponible');
+          }
           
           // Pre-cargar voces de síntesis de voz
           if (window.speechSynthesis) {
-            speechSynthesis.getVoices();
-            console.log('SpeechSynthesis inicializado correctamente');
+            // Forzar carga de voces
+            const loadVoices = () => {
+              const voices = speechSynthesis.getVoices();
+              console.log(`✅ SpeechSynthesis: ${voices.length} voces disponibles`);
+              if (voices.length > 0) {
+                const spanishVoices = voices.filter(v => v.lang.startsWith('es'));
+                console.log(`   - Voces en español: ${spanishVoices.length}`);
+              }
+            };
+            
+            // Las voces pueden no estar disponibles inmediatamente
+            if (speechSynthesis.getVoices().length === 0) {
+              speechSynthesis.onvoiceschanged = loadVoices;
+            } else {
+              loadVoices();
+            }
+            
+            // Workaround: hacer una síntesis silenciosa para "despertar" el sistema
+            const silentUtterance = new SpeechSynthesisUtterance('');
+            silentUtterance.volume = 0;
+            speechSynthesis.speak(silentUtterance);
+          } else {
+            console.log('⚠️ SpeechSynthesis no disponible en este dispositivo');
           }
         } catch (e) {
-          console.log('Error al inicializar audio:', e);
+          console.error('❌ Error al inicializar audio:', e);
         }
+        
         // Remover los listeners después de la primera interacción
         document.removeEventListener('click', initAudioOnFirstInteraction);
         document.removeEventListener('touchstart', initAudioOnFirstInteraction);
+        document.removeEventListener('touchend', initAudioOnFirstInteraction);
       };
       
-      document.addEventListener('click', initAudioOnFirstInteraction, { once: true });
-      document.addEventListener('touchstart', initAudioOnFirstInteraction, { once: true });
+      // Escuchar múltiples tipos de interacción para mejor compatibilidad
+      document.addEventListener('click', initAudioOnFirstInteraction);
+      document.addEventListener('touchstart', initAudioOnFirstInteraction);
+      document.addEventListener('touchend', initAudioOnFirstInteraction);
       
       // Inicializar listener de avisos de voz para directores y maestros
       setTimeout(() => {
