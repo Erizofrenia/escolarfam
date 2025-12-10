@@ -377,9 +377,113 @@
     ========================================
     */
     
-    // URL base de la API - cambiar para producción
-    const API_URL = '';
-    // const API_URL = ''; // Para desarrollo local
+    // URL base de la API
+    // Para la app móvil (Capacitor) DEBE apuntar al servidor remoto
+    // Para web en el mismo servidor, puede ser cadena vacía
+    const API_URL = 'https://escolarfam.hackersinternet.mx';
+    
+    // Función global de login (llamada desde onclick del botón)
+    window.handleLogin = async function() {
+      const nombre_usuario = document.getElementById('username').value;
+      const password = document.getElementById('password').value;
+      const rememberMe = document.getElementById('rememberMe').checked;
+      
+      if (!nombre_usuario || !password) {
+        showToast('Por favor ingresa usuario y contraseña', 'error');
+        return;
+      }
+      
+      try {
+        const respuesta = await fetch(API_URL + '/api/auth/login', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            nombre_usuario: nombre_usuario,
+            password: password
+          })
+        });
+    
+        const datos = await respuesta.json();
+    
+        if (!respuesta.ok) {
+          showToast(datos.message || 'Error en el login', 'error');
+          return;
+        }
+    
+        // Guardar datos del usuario logueado
+        idUsuarioActual = datos.usuario.id_usuario;
+        rolUsuarioActual = datos.usuario.rol;
+        datosUsuarioActual = datos.usuario;
+        isLoggedIn = true;
+    
+        // Guardar en localStorage para mantener sesión si lo requiere
+        if (rememberMe) {
+          localStorage.setItem('escolarfam_sesion', JSON.stringify({
+            id: idUsuarioActual,
+            rol: rolUsuarioActual,
+            datos: datosUsuarioActual,
+            rememberMe: true
+          }));
+        }
+    
+        // Mostrar la aplicación
+        await mostrarAplicacion();
+        showToast('¡Bienvenido ' + datos.usuario.nombre_completo + '!', 'success');
+    
+      } catch (error) {
+        showToast('Error de conexión: ' + error.message, 'error');
+        console.error('Error en login:', error);
+      }
+    };
+
+    // Función para obtener URL completa de imágenes
+    // Convierte rutas relativas (/media/...) a URLs absolutas para que funcionen en la app móvil
+    function getFullImageUrl(path) {
+      if (!path) return null;
+      // Si ya es una URL completa, devolverla tal cual
+      if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('data:')) {
+        return path;
+      }
+      // Si es una ruta relativa, agregar API_URL
+      if (path.startsWith('/')) {
+        return API_URL + path;
+      }
+      // Cualquier otro caso, asumir que es relativa
+      return API_URL + '/' + path;
+    }
+
+    /**
+     * Genera HTML para un avatar con fallback inteligente:
+     * 1. Si tiene foto_perfil, la muestra
+     * 2. Si no tiene foto, muestra el logo de la escuela con baja opacidad
+     * 3. Si falla la carga, muestra el logo de la escuela
+     * @param {string} fotoPerfil - Ruta de la foto de perfil
+     * @param {string} nombre - Nombre para el alt text
+     * @param {string} cssClass - Clase CSS opcional para la imagen
+     * @param {string} styles - Estilos inline opcionales
+     * @returns {string} HTML del avatar
+     */
+    function getAvatarHtml(fotoPerfil, nombre = 'Usuario', cssClass = '', styles = 'width: 100%; height: 100%; object-fit: cover; border-radius: 50%;') {
+      const logoEscuela = schoolConfig.logo_escuela ? getFullImageUrl(schoolConfig.logo_escuela) : null;
+      
+      if (fotoPerfil) {
+        const fotoUrl = getFullImageUrl(fotoPerfil);
+        // Si hay logo de escuela, usarlo como fallback en caso de error
+        const onerrorHandler = logoEscuela 
+          ? `onerror="this.onerror=null; this.src='${logoEscuela}'; this.style.opacity='0.4'; this.style.filter='grayscale(50%)';"`
+          : `onerror="this.style.display='none'; this.parentElement.innerHTML='<i class=\\'fas fa-user\\' style=\\'font-size: inherit; opacity: 0.5;\\'></i>';"`;
+        
+        return `<img src="${fotoUrl}" alt="${nombre}" class="${cssClass}" style="${styles}" ${onerrorHandler}>`;
+      } else if (logoEscuela) {
+        // No tiene foto, mostrar logo de escuela con baja opacidad
+        return `<img src="${logoEscuela}" alt="${nombre}" class="${cssClass}" style="${styles} opacity: 0.4; filter: grayscale(50%);">`;
+      } else {
+        // No hay foto ni logo, mostrar icono genérico
+        return `<i class="fas fa-user" style="font-size: inherit; opacity: 0.5;"></i>`;
+      }
+    }
     
     let datosUsuarioActual = null;
     let idUsuarioActual = null;      // Se obtiene al hacer login
@@ -508,10 +612,8 @@
         escuela: idEscuelaActual || datosUsuarioActual?.id_escuela || 1
       });
       
-      // HTML para la foto de perfil
-      const photoHTML = fotoPerfil 
-        ? `<img src="${fotoPerfil}" alt="${nombre}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;">`
-        : (user.emoji || '👤');
+      // HTML para la foto de perfil - usando getAvatarHtml con fallback al logo escuela
+      const photoHTML = getAvatarHtml(fotoPerfil, nombre, '', 'width: 100%; height: 100%; object-fit: cover; border-radius: 50%;');
       
       // Crear el HTML del badge
       const badgeHTML = `
@@ -676,9 +778,7 @@
         const studentNodes = companeros && companeros.length > 0 
           ? companeros.map(comp => {
               const isCurrentUser = comp.id_usuario === idUsuarioActual;
-              const avatarContent = comp.foto_perfil 
-                ? `<img src="${comp.foto_perfil}" alt="${comp.nombre_completo}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;">`
-                : '👦';
+              const avatarContent = getAvatarHtml(comp.foto_perfil, comp.nombre_completo, '', 'width: 100%; height: 100%; object-fit: cover; border-radius: 50%;');
               
               return `
                 <div class="tree-node tree-leaf" ${!isCurrentUser ? `onclick="openChatById(${comp.id_usuario}, '${comp.nombre_completo.replace(/'/g, "\\'")}')"` : ''} style="${isCurrentUser ? 'border: 3px solid #FFB347; box-shadow: 0 0 15px rgba(255,179,71,0.5);' : ''}">
@@ -693,10 +793,8 @@
         
         // Renderizar maestro en la raíz del árbol
         const maestroContent = maestro 
-          ? (maestro.foto_perfil 
-              ? `<img src="${maestro.foto_perfil}" alt="${maestro.nombre_completo}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;">`
-              : '👨‍🏫')
-          : '👨‍🏫';
+          ? getAvatarHtml(maestro.foto_perfil, maestro.nombre_completo, '', 'width: 100%; height: 100%; object-fit: cover; border-radius: 50%;')
+          : '<i class="fas fa-chalkboard-teacher" style="font-size: 24px; opacity: 0.5;"></i>';
         
         return `
           <div class="tree-screen">
@@ -757,7 +855,7 @@
         const studentNodes = estudiantes.map(estudiante => {
           // Definir contenido del avatar
           const avatarContent = estudiante.foto_perfil ? 
-            `<img src="${estudiante.foto_perfil}" alt="${estudiante.nombre_completo}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;">` :
+            `<img src="${getFullImageUrl(estudiante.foto_perfil)}" alt="${estudiante.nombre_completo}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;">` :
             '👦'; // emoji por defecto
 
           // Opciones para cada estudiante
@@ -793,7 +891,7 @@
             <div class="tree-container">
               <div class="tree-node tree-teacher">
                 ${datosUsuarioActual.foto_perfil ? 
-                  `<img src="${datosUsuarioActual.foto_perfil}" alt="${datosUsuarioActual.nombre_completo}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;">` : 
+                  `<img src="${getFullImageUrl(datosUsuarioActual.foto_perfil)}" alt="${datosUsuarioActual.nombre_completo}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;">` : 
                   '👨‍🏫'
                 }
               </div>
@@ -890,7 +988,7 @@
 
           // Mostrar foto de perfil si está disponible, sino emoji
           const avatarContent = persona.foto_perfil ? 
-            `<img src="${persona.foto_perfil}" alt="${persona.nombre_completo}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;">` : 
+            `<img src="${getFullImageUrl(persona.foto_perfil)}" alt="${persona.nombre_completo}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;">` : 
             emoji;
 
           return `
@@ -1153,10 +1251,16 @@
         }).join('');
       };
       
-      // Generar cards (para móvil) - diseño compacto
+      // Generar cards (para móvil) - diseño compacto con más info
       const generateLogCards = (logsData) => {
         if (!logsData || logsData.length === 0) {
-          return `<div class="brain-empty-message">No hay registros</div>`;
+          return `
+            <div class="brain-empty-message">
+              <i class="fas fa-clipboard-list" style="font-size: 40px; margin-bottom: 15px; opacity: 0.3;"></i>
+              <p>No hay registros de actividad</p>
+              <small style="color: rgba(255,255,255,0.3);">Las actividades del sistema aparecerán aquí</small>
+            </div>
+          `;
         }
         
         return logsData.map(log => {
@@ -1164,7 +1268,17 @@
           const fechaStr = fecha.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit' });
           const horaStr = fecha.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
           const actionColor = getActionColor(log.accion);
-          const usuario = log.usuario_nombre ? log.usuario_nombre.split(' ')[0] : 'Sistema';
+          const usuario = log.usuario_nombre || 'Sistema';
+          const rol = log.usuario_rol ? log.usuario_rol.charAt(0).toUpperCase() + log.usuario_rol.slice(1) : '';
+          
+          // Parsear detalles si existen
+          let detallesStr = '';
+          if (log.detalles) {
+            try {
+              const detalles = typeof log.detalles === 'string' ? JSON.parse(log.detalles) : log.detalles;
+              detallesStr = Object.entries(detalles).slice(0, 2).map(([k, v]) => `${k}: ${v}`).join(' • ');
+            } catch { detallesStr = String(log.detalles).substring(0, 50); }
+          }
           
           return `
             <div class="brain-log-card">
@@ -1172,8 +1286,13 @@
                 <span class="brain-card-action" style="background: ${actionColor}25; color: ${actionColor};">${log.accion}</span>
                 <span class="brain-card-time">${fechaStr} ${horaStr}</span>
               </div>
-              <div class="brain-card-user">${usuario}</div>
-              ${log.tabla_afectada ? `<div class="brain-card-tabla">${log.tabla_afectada}</div>` : ''}
+              <div class="brain-card-user">
+                <i class="fas fa-user" style="margin-right: 5px; font-size: 10px; opacity: 0.5;"></i>
+                ${usuario}
+                ${rol ? `<span style="color: rgba(255,255,255,0.4); font-size: 10px; margin-left: 6px;">(${rol})</span>` : ''}
+              </div>
+              ${log.tabla_afectada ? `<div class="brain-card-tabla"><i class="fas fa-table" style="margin-right: 4px;"></i>${log.tabla_afectada}</div>` : ''}
+              ${detallesStr ? `<div class="brain-card-detalles">${detallesStr}</div>` : ''}
             </div>
           `;
         }).join('');
@@ -1468,30 +1587,30 @@
     window.refreshBrainLogs = async function() {
       brainCurrentPage = 0;
       await loadBrainLogs();
-      showNotification('Logs actualizados', 'success');
+      showToast('Logs actualizados', 'success');
     };
     
     // Función para limpiar logs antiguos
     window.clearOldLogs = async function() {
-      if (!confirm('¿Estás seguro de eliminar los logs con más de 30 días de antigüedad?')) return;
+      if (!confirm('¿Estás seguro de eliminar los logs con más de 90 días de antigüedad?')) return;
       
       try {
-        const response = await fetch(`${API_URL}/api/config/escuela/${datosUsuarioActual.id_escuela}/logs`, {
+        const response = await fetch(`${API_URL}/api/config/escuela/${datosUsuarioActual.id_escuela}/logs/clear?dias=90`, {
           method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ dias_antiguedad: 30 })
+          headers: { 'Content-Type': 'application/json' }
         });
         
         if (!response.ok) throw new Error('Error al limpiar logs');
         
         const result = await response.json();
-        showNotification(`Se eliminaron ${result.registros_eliminados} registros antiguos`, 'success');
+        showToast(result.message || 'Logs antiguos eliminados', 'success');
         
         // Recargar la vista
+        brainCurrentPage = 0;
         await loadBrainLogs();
       } catch (error) {
         console.error('Error limpiando logs:', error);
-        showNotification('Error al limpiar logs', 'error');
+        showToast('Error al limpiar logs', 'error');
       }
     };
     
@@ -1633,7 +1752,7 @@
       // Generar HTML para la foto (si existe, mostrar imagen; si no, mostrar emoji del userData)
       const user = userData[currentRole];
       const photoHTML = fotoValue 
-        ? `<img src="${fotoValue}" alt="Foto de perfil" class="profile-photo-image">`
+        ? `<img src="${getFullImageUrl(fotoValue)}" alt="Foto de perfil" class="profile-photo-image">`
         : `<div class="profile-photo-emoji">${user.emoji}</div>`;
 
       return `
@@ -1760,7 +1879,7 @@
               <span class="notification-time">${notif.time}</span>
             </div>
             <div class="notification-content">
-              ${notif.foto_hijo ? `<img src="${notif.foto_hijo}" alt="${notif.student}" class="notification-student-photo">` : ''}
+              <div class="notification-student-photo-container">${getAvatarHtml(notif.foto_hijo, notif.student, 'notification-student-photo', 'width: 50px; height: 50px; object-fit: cover; border-radius: 50%;')}</div>
               <div>${notif.content}</div>
             </div>
             ${notif.alertaAlternativa}
@@ -1805,7 +1924,7 @@
                   <span class="historial-time">${time}</span>
                 </div>
                 <div class="historial-content">
-                  ${reg.foto_hijo ? `<img src="${reg.foto_hijo}" alt="${reg.nombre_hijo}" class="historial-photo">` : ''}
+                  <div class="historial-photo-container">${getAvatarHtml(reg.foto_hijo, reg.nombre_hijo, 'historial-photo', 'width: 40px; height: 40px; object-fit: cover; border-radius: 50%;')}</div>
                   <div class="historial-detalles">${detalles}</div>
                 </div>
                 ${personaRecoge}
@@ -2324,7 +2443,7 @@
                   <tr>
                     <td data-label="Nombre">
                       <div class="user-cell">
-                        <img src="${alumno.foto_perfil || '/media/default-avatar.png'}" alt="${alumno.nombre_completo}" class="user-avatar">
+                        <img src="${getFullImageUrl(alumno.foto_perfil || '/media/default-avatar.png')}" alt="${alumno.nombre_completo}" class="user-avatar">
                         <span>${alumno.nombre_completo}</span>
                       </div>
                     </td>
@@ -2410,7 +2529,7 @@
           <div class="crud-modal">
             <h3><i class="fas fa-user"></i> Información del Alumno</h3>
             <div class="alumno-info-detail">
-              <img src="${alumno.foto_perfil || '/media/default-avatar.png'}" alt="${alumno.nombre_completo}" class="info-avatar">
+              <img src="${getFullImageUrl(alumno.foto_perfil || '/media/default-avatar.png')}" alt="${alumno.nombre_completo}" class="info-avatar">
               <h4>${alumno.nombre_completo}</h4>
               <p><strong>Email:</strong> ${alumno.email}</p>
               <p><strong>Grupo:</strong> ${alumno.asignacion || 'Sin asignar'}</p>
@@ -2515,7 +2634,7 @@
                 <div class="alumnos-grid">
                   ${alumnos.map(alumno => `
                     <div class="alumno-card">
-                      <img src="${alumno.foto_perfil || '/media/default-avatar.png'}" alt="${alumno.nombre_completo}">
+                      <img src="${getFullImageUrl(alumno.foto_perfil || '/media/default-avatar.png')}" alt="${alumno.nombre_completo}">
                       <div class="alumno-info">
                         <strong>${alumno.nombre_completo}</strong>
                         <small>${alumno.email}</small>
@@ -2526,7 +2645,7 @@
                     </div>
                   `).join('')}
                 </div>
-              ` : '<p class="no-data">No hay alumnos asignados</p>'}
+              ` : '<p class="no-data">No hay alumnos asignados</p>'}}
             </div>
             
             <div class="modal-actions">
@@ -2589,6 +2708,7 @@
                 <tr>
                   <th>ID</th>
                   <th>Nombre</th>
+                  <th>Usuario</th>
                   <th>Email</th>
                   <th>Rol</th>
                   <th>Grupo/Asignación</th>
@@ -2601,10 +2721,11 @@
                     <td data-label="ID">${usuario.id_usuario}</td>
                     <td data-label="Nombre">
                       <div class="user-cell">
-                        <img src="${usuario.foto_perfil || '/media/default-avatar.png'}" alt="${usuario.nombre_completo}" class="user-avatar">
+                        <img src="${getFullImageUrl(usuario.foto_perfil || '/media/default-avatar.png')}" alt="${usuario.nombre_completo}" class="user-avatar">
                         <span>${usuario.nombre_completo}</span>
                       </div>
                     </td>
+                    <td data-label="Usuario"><code class="username-code">${usuario.nombre_usuario || '-'}</code></td>
                     <td data-label="Email">${usuario.email}</td>
                     <td data-label="Rol"><span class="role-badge role-${usuario.rol}">${usuario.rol}</span></td>
                     <td data-label="Grupo">${usuario.asignacion || '-'}</td>
@@ -2612,6 +2733,9 @@
                       <div class="action-buttons">
                         <button class="btn-icon btn-edit" onclick="openEditUsuarioModal(${usuario.id_usuario})" title="Editar">
                           <i class="fas fa-edit"></i>
+                        </button>
+                        <button class="btn-icon btn-key" onclick="openResetPasswordModal(${usuario.id_usuario}, '${usuario.nombre_completo.replace(/'/g, "\\'")}', '${usuario.nombre_usuario || ''}')" title="Restablecer contraseña">
+                          <i class="fas fa-key"></i>
                         </button>
                         ${usuario.rol === 'alumno' ? `
                           <button class="btn-icon btn-link" onclick="openVincularPadreModal(${usuario.id_usuario})" title="Vincular Padre">
@@ -3054,6 +3178,91 @@
       }
     };
 
+    // Modal para restablecer contraseña de usuario
+    window.openResetPasswordModal = function(idUsuario, nombreCompleto, nombreUsuario) {
+      showDynamicModal(`
+        <div class="crud-modal">
+          <h3><i class="fas fa-key"></i> Restablecer Contraseña</h3>
+          <div class="user-reset-info">
+            <p><strong>Usuario:</strong> ${nombreCompleto}</p>
+            <p><strong>Nombre de usuario:</strong> <code>${nombreUsuario || 'No definido'}</code></p>
+          </div>
+          <form id="resetPasswordForm" onsubmit="event.preventDefault(); resetUserPassword(${idUsuario});">
+            <div class="form-group">
+              <label>Nueva Contraseña *</label>
+              <div class="password-input-container">
+                <input type="password" id="newPasswordReset" required minlength="6" placeholder="Mínimo 6 caracteres">
+                <button type="button" class="toggle-password" onclick="togglePasswordVisibility('newPasswordReset')">
+                  <i class="fas fa-eye"></i>
+                </button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Confirmar Contraseña *</label>
+              <div class="password-input-container">
+                <input type="password" id="confirmPasswordReset" required minlength="6" placeholder="Repite la contraseña">
+                <button type="button" class="toggle-password" onclick="togglePasswordVisibility('confirmPasswordReset')">
+                  <i class="fas fa-eye"></i>
+                </button>
+              </div>
+            </div>
+            <div class="modal-actions">
+              <button type="submit" class="btn-primary"><i class="fas fa-save"></i> Cambiar Contraseña</button>
+              <button type="button" class="btn-secondary" onclick="closeDynamicModal()">Cancelar</button>
+            </div>
+          </form>
+        </div>
+      `);
+    };
+
+    // Toggle para mostrar/ocultar contraseña
+    window.togglePasswordVisibility = function(inputId) {
+      const input = document.getElementById(inputId);
+      const icon = event.currentTarget.querySelector('i');
+      if (input.type === 'password') {
+        input.type = 'text';
+        icon.classList.replace('fa-eye', 'fa-eye-slash');
+      } else {
+        input.type = 'password';
+        icon.classList.replace('fa-eye-slash', 'fa-eye');
+      }
+    };
+
+    // Función para restablecer contraseña
+    window.resetUserPassword = async function(idUsuario) {
+      const newPassword = document.getElementById('newPasswordReset').value;
+      const confirmPassword = document.getElementById('confirmPasswordReset').value;
+      
+      if (newPassword !== confirmPassword) {
+        showToast('Las contraseñas no coinciden', 'error');
+        return;
+      }
+      
+      if (newPassword.length < 6) {
+        showToast('La contraseña debe tener al menos 6 caracteres', 'error');
+        return;
+      }
+      
+      try {
+        const response = await fetch(`${API_URL}/api/usuarios/${idUsuario}/reset-password`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: newPassword })
+        });
+        
+        if (response.ok) {
+          showToast('Contraseña restablecida exitosamente ✅', 'success');
+          closeDynamicModal();
+        } else {
+          const error = await response.json();
+          throw new Error(error.message || 'Error al restablecer');
+        }
+      } catch (error) {
+        console.error('Error:', error);
+        showToast(error.message || 'Error al restablecer contraseña', 'error');
+      }
+    };
+
     // Modal para vincular padre a alumno
     window.openVincularPadreModal = async function(idAlumno) {
       const alumno = panelUsuarios.find(u => u.id_usuario === idAlumno);
@@ -3366,7 +3575,7 @@
                 <div class="alumnos-grid">
                   ${alumnos.map(alumno => `
                     <div class="alumno-card">
-                      <img src="${alumno.foto_perfil || '/media/default-avatar.png'}" alt="${alumno.nombre_completo}">
+                      <img src="${getFullImageUrl(alumno.foto_perfil || '/media/default-avatar.png')}" alt="${alumno.nombre_completo}">
                       <div class="alumno-info">
                         <strong>${alumno.nombre_completo}</strong>
                         <small>${alumno.email}</small>
@@ -3377,7 +3586,7 @@
                     </div>
                   `).join('')}
                 </div>
-              ` : '<p class="no-data">No hay alumnos asignados</p>'}
+              ` : '<p class="no-data">No hay alumnos asignados</p>'}}
             </div>
             
             <div class="asignar-alumno-section">
@@ -5600,7 +5809,7 @@
           const container = document.getElementById('profilePhotoContainer');
           if (container) {
             const currentPhoto = (datosUsuarioActual && datosUsuarioActual.foto_perfil)
-              ? `<img src="${datosUsuarioActual.foto_perfil}" alt="Foto de perfil" class="profile-photo-image">`
+              ? `<img src="${getFullImageUrl(datosUsuarioActual.foto_perfil)}" alt="Foto de perfil" class="profile-photo-image">`
               : `<div class="profile-photo-emoji">${user.emoji}</div>`;
             container.innerHTML = currentPhoto;
           }
@@ -6483,7 +6692,8 @@
       if (modal) modal.classList.remove('show');
     };
 
-    function showToast(message, type = 'info') {
+    // Función global showToast
+    window.showToast = function(message, type = 'info') {
       // Crear toast notification
       const toast = document.createElement('div');
       toast.style.cssText = `
@@ -6514,7 +6724,10 @@
           }
         }, 300);
       }, 3000);
-    }
+    };
+    
+    // Alias local para compatibilidad
+    const showToast = window.showToast;
 
     function toggleCheck(element) {
       element.classList.toggle('checked');
@@ -6729,45 +6942,92 @@
           return;
         }
 
+        // Solicitar permisos de cámara explícitamente para Capacitor/móvil
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+          stream.getTracks().forEach(track => track.stop()); // Detener después de obtener permiso
+        } catch (permErr) {
+          console.log('Solicitando permisos de cámara...');
+        }
+
         html5QrScanner = new Html5Qrcode("qr-reader");
+        
+        // Obtener lista de cámaras disponibles
+        let cameras = [];
+        try {
+          cameras = await Html5Qrcode.getCameras();
+          console.log('Cámaras disponibles:', cameras);
+        } catch (camErr) {
+          console.log('No se pudo listar cámaras:', camErr);
+        }
         
         const config = {
           fps: 10,
           qrbox: { width: 250, height: 250 },
-          aspectRatio: 1.0
+          aspectRatio: 1.0,
+          disableFlip: false,
+          experimentalFeatures: {
+            useBarCodeDetectorIfSupported: true
+          }
         };
 
-        // Intentar con cámara trasera primero
-        await html5QrScanner.start(
-          { facingMode: "environment" },
-          config,
-          onQRCodeScanned,
-          (errorMessage) => {
-            // Ignorar errores de escaneo continuo
-          }
-        );
+        // Si hay cámaras, intentar usar la trasera por ID
+        let cameraId = null;
+        if (cameras.length > 0) {
+          // Buscar cámara trasera
+          const backCamera = cameras.find(cam => 
+            cam.label.toLowerCase().includes('back') || 
+            cam.label.toLowerCase().includes('rear') ||
+            cam.label.toLowerCase().includes('trasera') ||
+            cam.label.toLowerCase().includes('environment')
+          );
+          cameraId = backCamera ? backCamera.id : cameras[cameras.length - 1].id;
+        }
 
-        statusEl.innerHTML = '<i class="fas fa-check-circle" style="color: #4CAF50;"></i> Cámara activa - Escanea un código QR';
-        document.getElementById('btnCambiarCamara').style.display = 'inline-flex';
+        // Intentar iniciar con ID de cámara o facingMode
+        try {
+          if (cameraId) {
+            await html5QrScanner.start(cameraId, config, onQRCodeScanned, () => {});
+          } else {
+            await html5QrScanner.start({ facingMode: "environment" }, config, onQRCodeScanned, () => {});
+          }
+          statusEl.innerHTML = '<i class="fas fa-check-circle" style="color: #4CAF50;"></i> Cámara activa - Escanea un código QR';
+          document.getElementById('btnCambiarCamara').style.display = cameras.length > 1 ? 'inline-flex' : 'none';
+        } catch (err) {
+          console.error('Error con cámara trasera, intentando frontal:', err);
+          // Intentar cámara frontal
+          try {
+            await html5QrScanner.start({ facingMode: "user" }, config, onQRCodeScanned, () => {});
+            statusEl.innerHTML = '<i class="fas fa-check-circle" style="color: #4CAF50;"></i> Cámara frontal activa';
+            document.getElementById('btnCambiarCamara').style.display = 'inline-flex';
+          } catch (err2) {
+            throw err2;
+          }
+        }
 
       } catch (err) {
         console.error('Error iniciando escáner:', err);
-        
-        // Intentar con cámara frontal si falla la trasera
-        try {
-          await html5QrScanner.start(
-            { facingMode: "user" },
-            { fps: 10, qrbox: { width: 250, height: 250 } },
-            onQRCodeScanned,
-            () => {}
-          );
-          statusEl.innerHTML = '<i class="fas fa-check-circle" style="color: #4CAF50;"></i> Cámara frontal activa';
-          document.getElementById('btnCambiarCamara').style.display = 'inline-flex';
-        } catch (err2) {
-          statusEl.innerHTML = `<i class="fas fa-exclamation-triangle" style="color: #ff6b6b;"></i> No se pudo acceder a la cámara. Usa el botón Probar.`;
-        }
+        statusEl.innerHTML = `
+          <i class="fas fa-exclamation-triangle" style="color: #ff6b6b;"></i> 
+          No se pudo acceder a la cámara.<br>
+          <small style="font-size: 12px; color: #999;">
+            ${err.message || 'Verifica los permisos de cámara en la configuración del dispositivo.'}
+          </small>
+          <br><br>
+          <button onclick="retryQRScanner()" class="qr-btn" style="margin-top: 10px;">
+            <i class="fas fa-redo"></i> Reintentar
+          </button>
+        `;
       }
     }
+
+    // Función para reintentar el scanner
+    window.retryQRScanner = function() {
+      const statusEl = document.getElementById('qr-status');
+      statusEl.innerHTML = '<i class="fas fa-camera"></i> Iniciando cámara...';
+      stopQRScanner();
+      setTimeout(() => startQRScanner(), 500);
+    };
 
     function onQRCodeScanned(decodedText, decodedResult) {
       // Vibrar si está disponible
@@ -6908,18 +7168,41 @@
         // Parsear los datos del QR
         const userData = JSON.parse(qrDataString);
         
+        // Validar que tenga ID
+        if (!userData.id) {
+          showToast('Código QR inválido: no contiene ID de usuario', 'error');
+          return;
+        }
+        
         // Obtener información adicional del usuario desde la BD
         const response = await fetch(`${API_URL}/api/usuarios/${userData.id}`);
-        if (!response.ok) throw new Error('Usuario no encontrado');
+        
+        if (!response.ok) {
+          const status = response.status;
+          if (status === 404) {
+            showToast(`Usuario con ID ${userData.id} no encontrado en el sistema`, 'error');
+          } else {
+            showToast(`Error del servidor: ${status}`, 'error');
+          }
+          // Volver al lector QR
+          setTimeout(() => showQRReader(), 1500);
+          return;
+        }
         
         const userInfo = await response.json();
+        
+        // Verificar que el usuario tenga datos válidos
+        if (!userInfo || !userInfo.id_usuario) {
+          showToast('Datos de usuario incompletos', 'error');
+          return;
+        }
         
         const modal = document.getElementById('friendsModal');
         const modalContent = modal.querySelector('.modal-content');
         
-        // HTML para la foto
+        // HTML para la foto - usar getFullImageUrl
         const photoHTML = userInfo.foto_perfil 
-          ? `<img src="${userInfo.foto_perfil}" alt="${userInfo.nombre_completo}" style="width: 80px; height: 80px; border-radius: 50%; object-fit: cover;">`
+          ? `<img src="${getFullImageUrl(userInfo.foto_perfil)}" alt="${userInfo.nombre_completo}" style="width: 80px; height: 80px; border-radius: 50%; object-fit: cover;">`
           : `<div style="font-size: 50px;">👤</div>`;
         
         // Construir sección de relacionados según el rol
@@ -6940,7 +7223,7 @@
                     <div class="qr-related-list">
                       ${padres.map(padre => `
                         <div class="qr-related-item">
-                          <div class="qr-related-emoji">${padre.foto_perfil ? `<img src="${padre.foto_perfil}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;">` : '👤'}</div>
+                          <div class="qr-related-emoji">${padre.foto_perfil ? `<img src="${getFullImageUrl(padre.foto_perfil)}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;">` : '👤'}</div>
                           <div class="qr-related-info">
                             <div class="qr-related-name">${padre.nombre_completo}</div>
                             <div class="qr-related-role">${padre.parentesco || 'Tutor'}</div>
@@ -6970,7 +7253,7 @@
                     <div class="qr-related-list">
                       ${hijos.map(hijo => `
                         <div class="qr-related-item">
-                          <div class="qr-related-emoji">${hijo.foto_perfil ? `<img src="${hijo.foto_perfil}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;">` : '👦'}</div>
+                          <div class="qr-related-emoji">${hijo.foto_perfil ? `<img src="${getFullImageUrl(hijo.foto_perfil)}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;">` : '👦'}</div>
                           <div class="qr-related-info">
                             <div class="qr-related-name">${hijo.nombre_completo}</div>
                             <div class="qr-related-role">Alumno - Grupo ${hijo.nombre_grupo || 'N/A'}</div>
@@ -8101,12 +8384,31 @@
       avisoTexto.focus();
     };
 
+    // Variable global para el contexto de audio (reutilizable)
+    let globalAudioContext = null;
+    
+    // Función para inicializar/reanudar el contexto de audio (necesario en Android)
+    async function ensureAudioContext() {
+      if (!globalAudioContext) {
+        globalAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      // En Android, el contexto puede estar suspendido hasta interacción del usuario
+      if (globalAudioContext.state === 'suspended') {
+        try {
+          await globalAudioContext.resume();
+        } catch (e) {
+          console.log('No se pudo reanudar AudioContext:', e);
+        }
+      }
+      return globalAudioContext;
+    }
+
     // Función para reproducir sonido de notificación tipo timbre
     window.playNotificationSound = function() {
-      return new Promise((resolve) => {
+      return new Promise(async (resolve) => {
         try {
-          // Crear contexto de audio
-          const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+          // Obtener o crear contexto de audio
+          const audioContext = await ensureAudioContext();
           
           // Configuración del timbre calmado
           const duration = 0.7; // 700ms de duración
@@ -8156,7 +8458,7 @@
           setTimeout(resolve, duration * 1000);
           
         } catch (error) {
-          console.log('Audio no disponible, continuando sin sonido de notificación');
+          console.log('Audio no disponible, continuando sin sonido de notificación:', error);
           resolve(); // Resolver inmediatamente si hay error
         }
       });
@@ -8222,6 +8524,24 @@
           ? `¡${studentName}, de ${grupoVoz}!`
           : `¡${studentName}!`;
         
+        // Función para obtener voces (esperando a que carguen en Android)
+        const getVoicesAsync = () => {
+          return new Promise((resolve) => {
+            let voices = speechSynthesis.getVoices();
+            if (voices.length > 0) {
+              resolve(voices);
+            } else {
+              // En Android/Chrome, las voces pueden tardar en cargar
+              speechSynthesis.onvoiceschanged = () => {
+                voices = speechSynthesis.getVoices();
+                resolve(voices);
+              };
+              // Timeout de seguridad
+              setTimeout(() => resolve(speechSynthesis.getVoices()), 1000);
+            }
+          });
+        };
+
         // Configurar síntesis de voz con más emoción
         const utterance = new SpeechSynthesisUtterance(mensaje);
         utterance.lang = 'es-ES';
@@ -8230,7 +8550,9 @@
         utterance.volume = 1.0;  // Volumen máximo
         
         // Buscar voz femenina en español para más emoción
-        const voices = speechSynthesis.getVoices();
+        const voices = await getVoicesAsync();
+        console.log('Voces disponibles:', voices.map(v => `${v.name} (${v.lang})`));
+        
         const spanishFemaleVoice = voices.find(voice => 
           voice.lang.startsWith('es') && voice.name.toLowerCase().includes('female')
         );
@@ -8238,7 +8560,24 @@
         
         if (spanishVoice) {
           utterance.voice = spanishVoice;
+          console.log('Usando voz:', spanishVoice.name);
+        } else {
+          console.log('No se encontró voz en español, usando voz por defecto');
         }
+        
+        // Manejar eventos de error
+        utterance.onerror = (event) => {
+          console.error('Error en síntesis de voz:', event.error);
+          showToast('Error al reproducir voz', 'error');
+        };
+        
+        utterance.onstart = () => {
+          console.log('Iniciando síntesis de voz:', mensaje);
+        };
+        
+        utterance.onend = () => {
+          console.log('Síntesis de voz completada');
+        };
         
         // Reproducir sonido de notificación primero
         await playNotificationSound();
@@ -8383,7 +8722,7 @@
       
       // HTML para la foto del hijo
       const photoHTML = hijo.foto_perfil 
-        ? `<img src="${hijo.foto_perfil}" alt="${hijo.name}" style="width: 80px; height: 80px; border-radius: 50%; object-fit: cover;">`
+        ? `<img src="${getFullImageUrl(hijo.foto_perfil)}" alt="${hijo.name}" style="width: 80px; height: 80px; border-radius: 50%; object-fit: cover;">`
         : `<div style="font-size: 50px;">${hijo.emoji || '👦'}</div>`;
       
       modalContent.innerHTML = `
@@ -9478,6 +9817,30 @@
         // Cargar logo desde caché si existe
         loadLoginScreenLogo();
       }
+      
+      // Inicializar Audio Context y SpeechSynthesis con la primera interacción del usuario
+      // Esto es NECESARIO en Android para que el audio funcione
+      const initAudioOnFirstInteraction = async () => {
+        try {
+          // Inicializar AudioContext
+          await ensureAudioContext();
+          console.log('AudioContext inicializado correctamente');
+          
+          // Pre-cargar voces de síntesis de voz
+          if (window.speechSynthesis) {
+            speechSynthesis.getVoices();
+            console.log('SpeechSynthesis inicializado correctamente');
+          }
+        } catch (e) {
+          console.log('Error al inicializar audio:', e);
+        }
+        // Remover los listeners después de la primera interacción
+        document.removeEventListener('click', initAudioOnFirstInteraction);
+        document.removeEventListener('touchstart', initAudioOnFirstInteraction);
+      };
+      
+      document.addEventListener('click', initAudioOnFirstInteraction, { once: true });
+      document.addEventListener('touchstart', initAudioOnFirstInteraction, { once: true });
       
       // Inicializar listener de avisos de voz para directores y maestros
       setTimeout(() => {

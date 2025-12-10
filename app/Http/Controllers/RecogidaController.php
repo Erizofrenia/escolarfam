@@ -127,6 +127,7 @@ class RecogidaController extends Controller
 
     /**
      * Obtener historial del día para un maestro
+     * Solo devuelve solicitudes con estado 'aprobada' o 'rechazada' (NO pendientes)
      */
     public function getHistorial($id)
     {
@@ -142,10 +143,13 @@ class RecogidaController extends Controller
             ->leftJoin('grupos as g', 'ag.id_grupo', '=', 'g.id_grupo')
             ->where('g.id_maestro', $id)
             ->whereDate('sr.fecha_solicitud', $hoy)
+            ->whereIn('sr.estado', ['aprobada', 'rechazada']) // Solo historial procesado, no pendientes
             ->select(
                 'sr.*',
                 'hijo.nombre_completo as nombre_hijo',
+                'hijo.foto_perfil as foto_hijo',
                 'padre.nombre_completo as nombre_padre',
+                'padre.foto_perfil as foto_padre',
                 'g.nombre_grupo'
             )
             ->orderBy('sr.fecha_solicitud', 'desc')

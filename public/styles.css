@@ -1177,6 +1177,15 @@
       font-style: italic;
     }
 
+    .brain-card-detalles {
+      color: rgba(255, 255, 255, 0.5);
+      font-size: 9px;
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      line-height: 1.4;
+    }
+
     /* Estilos viejos de log card - ocultos */
     .brain-log-card-header,
     .brain-log-card-fecha,
@@ -1188,9 +1197,17 @@
 
     .brain-empty-message {
       text-align: center;
-      padding: 40px 20px;
-      color: rgba(255, 255, 255, 0.3);
+      padding: 50px 20px;
+      color: rgba(255, 255, 255, 0.4);
       font-size: 13px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .brain-empty-message p {
+      margin: 0 0 5px 0;
     }
 
     /* Paginación móvil */
@@ -1610,14 +1627,25 @@
       color: #0D47A1;
     }
 
+    .notification-student-photo-container {
+      width: 50px;
+      height: 50px;
+      border-radius: 50%;
+      margin-right: 15px;
+      float: left;
+      border: 3px solid #FFB347;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, rgba(255,179,71,0.1), rgba(168,230,207,0.1));
+    }
+
     .notification-student-photo {
       width: 50px;
       height: 50px;
       border-radius: 50%;
       object-fit: cover;
-      margin-right: 15px;
-      float: left;
-      border: 3px solid #FFB347;
     }
 
     .no-notifications {
@@ -1798,12 +1826,24 @@
       margin-bottom: 6px;
     }
 
+    .historial-photo-container {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, rgba(255,179,71,0.1), rgba(168,230,207,0.1));
+      border: 2px solid #DDD;
+      flex-shrink: 0;
+    }
+
     .historial-photo {
-      width: 35px;
-      height: 35px;
+      width: 100%;
+      height: 100%;
       border-radius: 50%;
       object-fit: cover;
-      border: 2px solid #DDD;
     }
 
     .historial-detalles {
@@ -2592,6 +2632,74 @@
       cursor: not-allowed;
       transform: none;
       box-shadow: none;
+    }
+
+    /* Código de nombre de usuario en tabla */
+    .username-code {
+      background: #f0f0f0;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      color: #666;
+      border: 1px solid #ddd;
+    }
+
+    /* Botón de llave para reset password */
+    .btn-key {
+      background: #9B59B6 !important;
+      color: white !important;
+    }
+
+    .btn-key:hover {
+      background: #8E44AD !important;
+    }
+
+    /* Modal de reset password */
+    .user-reset-info {
+      background: #f8f9fa;
+      padding: 15px;
+      border-radius: 10px;
+      margin-bottom: 20px;
+    }
+
+    .user-reset-info p {
+      margin: 5px 0;
+      color: #666;
+    }
+
+    .user-reset-info code {
+      background: #e9ecef;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-family: monospace;
+      color: #333;
+    }
+
+    .password-input-container {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .password-input-container input {
+      flex: 1;
+      padding-right: 45px;
+    }
+
+    .toggle-password {
+      position: absolute;
+      right: 10px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: #999;
+      padding: 5px;
+      transition: color 0.2s;
+    }
+
+    .toggle-password:hover {
+      color: #FFB347;
     }
 
     /* Tickets de consultas */
@@ -4307,14 +4415,124 @@
     }
 
     .developer-info {
-      background: #f8f9fa;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
       padding: 20px;
       border-radius: 15px;
-      border-left: 4px solid #FFB347;
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      margin-bottom: 15px;
+    }
+
+    .developer-logo {
+      width: 60px;
+      height: 60px;
+      background: linear-gradient(135deg, #FF6B35, #FFB347);
+      border-radius: 15px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      color: white;
+      flex-shrink: 0;
+    }
+
+    .developer-details {
+      flex: 1;
+    }
+
+    .developer-name {
+      font-size: 18px;
+      font-weight: 700;
+      color: #FF6B35;
+      margin: 0 0 2px 0;
+    }
+
+    .developer-slogan {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.6);
+      margin: 0 0 8px 0;
+      font-style: italic;
+    }
+
+    .developer-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: #4ECDC4;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+
+    .developer-link:hover {
+      color: #A8E6CF;
+    }
+
+    .developer-services {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .developer-services p {
+      margin: 0;
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.7);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .developer-services i {
+      color: #4ECDC4;
+      font-size: 10px;
+    }
+
+    .developer-highlight {
+      background: linear-gradient(135deg, rgba(255, 107, 53, 0.1) 0%, rgba(255, 179, 71, 0.1) 100%);
+      border: 1px solid rgba(255, 107, 53, 0.3);
+      border-radius: 15px;
+      padding: 20px;
+    }
+
+    .contact-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      background: linear-gradient(135deg, #FF6B35, #FFB347);
+      color: white;
+      padding: 12px 24px;
+      border-radius: 25px;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 14px;
+      margin-top: 15px;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+
+    .contact-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 5px 20px rgba(255, 107, 53, 0.4);
+    }
+
+    .info-footer {
+      text-align: center;
+      padding-top: 20px;
+      margin-top: 20px;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .info-footer p {
+      margin: 0;
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.4);
     }
 
     .dark-theme .developer-info {
-      background: #1a1a2e;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
     }
 
     /* Modal de recuperar contraseña */
@@ -6162,5 +6380,149 @@
 
       .crud-section {
         padding: 12px !important;
+      }
+
+      /* === CONSULTAS/TICKETS RESPONSIVE === */
+      .consultas-container {
+        padding: 10px !important;
+        overflow-x: hidden;
+      }
+
+      .consultas-header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+      }
+
+      .consultas-header .screen-title {
+        font-size: 16px;
+        text-align: center;
+      }
+
+      .consultas-actions {
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 8px;
+      }
+
+      .consultas-actions .action-btn {
+        flex: 1;
+        min-width: 120px;
+        justify-content: center;
+        padding: 8px 12px;
+        font-size: 11px;
+      }
+
+      .tickets-stats {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+        padding: 12px;
+        margin-bottom: 15px;
+      }
+
+      .stat-item {
+        padding: 8px;
+      }
+
+      .stat-number {
+        font-size: 20px;
+      }
+
+      .stat-label {
+        font-size: 10px;
+      }
+
+      .tickets-filters {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        justify-content: center;
+        margin-bottom: 15px;
+      }
+
+      .filter-btn {
+        padding: 6px 12px;
+        font-size: 11px;
+        flex: 1;
+        min-width: 70px;
+        max-width: 100px;
+        text-align: center;
+      }
+
+      .tickets-list {
+        gap: 10px;
+      }
+
+      .ticket-item {
+        padding: 12px;
+        border-radius: 12px;
+      }
+
+      .ticket-header {
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .ticket-user {
+        width: 100%;
+      }
+
+      .ticket-meta {
+        flex-direction: row;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 6px;
+        width: 100%;
+      }
+
+      .ticket-date,
+      .ticket-time {
+        font-size: 11px;
+      }
+
+      .ticket-priority,
+      .ticket-status {
+        font-size: 9px;
+        padding: 3px 8px;
+      }
+
+      .ticket-subject {
+        font-size: 14px;
+        margin-bottom: 8px;
+      }
+
+      .ticket-content {
+        font-size: 13px;
+        margin-bottom: 12px;
+        line-height: 1.4;
+      }
+
+      .ticket-actions {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+      }
+
+      .ticket-btn {
+        padding: 8px 6px;
+        font-size: 10px;
+        justify-content: center;
+        border-radius: 15px;
+      }
+
+      .ticket-btn i {
+        margin: 0;
+      }
+
+      .ticket-btn span,
+      .ticket-btn:not(:has(i)) {
+        display: none;
+      }
+
+      /* Solo mostrar iconos en botones de tickets en móvil */
+      .ticket-actions .ticket-btn {
+        gap: 0;
       }
     }
