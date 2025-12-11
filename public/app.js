@@ -488,6 +488,7 @@
     /**
      * Genera el contenido HTML para una burbuja/nodo de árbol
      * Usa la foto si existe, sino el logo de la escuela con opacidad baja
+     * El logo de la escuela se carga desde schoolConfig.logo_escuela (configuración del panel)
      * @param {string} fotoPerfil - Ruta de la foto de perfil
      * @param {string} nombre - Nombre para el alt text
      * @returns {string} HTML del contenido de la burbuja
@@ -502,10 +503,10 @@
           ? `onerror="this.onerror=null; this.src='${logoEscuela}'; this.classList.add('school-logo-placeholder');"`
           : `onerror="this.style.display='none'; this.parentElement.innerHTML='<i class=\\'fas fa-user\\' style=\\'font-size: 28px; opacity: 0.4; color: #7EC8A3;\\'></i>';"`;
         
-        return `<img src="${fotoUrl}" alt="${nombre}" ${onerrorHandler}>`;
+        return `<div class="tree-node-img-container"><img src="${fotoUrl}" alt="${nombre}" ${onerrorHandler}></div>`;
       } else if (logoEscuela) {
         // No tiene foto, mostrar logo de escuela con baja opacidad
-        return `<img src="${logoEscuela}" alt="${nombre}" class="school-logo-placeholder">`;
+        return `<div class="tree-node-img-container"><img src="${logoEscuela}" alt="${nombre}" class="school-logo-placeholder"></div>`;
       } else {
         // No hay foto ni logo, mostrar icono genérico
         return `<i class="fas fa-user" style="font-size: 28px; opacity: 0.4; color: #7EC8A3;"></i>`;
@@ -2882,8 +2883,35 @@
 
     // Tab de Configuración (panel antiguo simplificado)
     function renderConfigTab() {
+      // Obtener el logo actual si existe
+      const logoHtml = schoolConfig.logo_escuela 
+        ? `<img src="${getFullImageUrl(schoolConfig.logo_escuela)}?t=${Date.now()}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 12px;">`
+        : `<i class="fas fa-school" style="font-size: 60px; color: rgba(255,255,255,0.7);"></i>`;
+      
       return `
         <div class="crud-section">
+          <!-- Sección del Logo de la Escuela -->
+          <div class="config-section">
+            <div class="config-title">
+              <i class="fas fa-image"></i> Logo de la Escuela
+            </div>
+            <div class="logo-upload-container">
+              <div class="logo-preview-box" id="schoolLogoPreview">
+                ${logoHtml}
+              </div>
+              <div class="logo-upload-actions">
+                <label class="upload-logo-btn">
+                  <i class="fas fa-upload"></i> Subir Logo
+                  <input type="file" accept="image/*" style="display: none;" onchange="previewSchoolLogo(this)">
+                </label>
+                <button class="remove-logo-btn" onclick="removeSchoolLogo()">
+                  <i class="fas fa-trash"></i> Quitar
+                </button>
+              </div>
+              <p class="logo-hint">Este logo aparecerá en las burbujas de usuarios sin foto de perfil</p>
+            </div>
+          </div>
+
           <div class="config-section">
             <div class="config-title">
               <i class="fas fa-bell"></i> Notificaciones del Sistema
