@@ -484,6 +484,33 @@
         return `<i class="fas fa-user" style="font-size: inherit; opacity: 0.5;"></i>`;
       }
     }
+
+    /**
+     * Genera el contenido HTML para una burbuja/nodo de árbol
+     * Usa la foto si existe, sino el logo de la escuela con opacidad baja
+     * @param {string} fotoPerfil - Ruta de la foto de perfil
+     * @param {string} nombre - Nombre para el alt text
+     * @returns {string} HTML del contenido de la burbuja
+     */
+    function getTreeNodeContent(fotoPerfil, nombre = 'Usuario') {
+      const logoEscuela = schoolConfig.logo_escuela ? getFullImageUrl(schoolConfig.logo_escuela) : null;
+      
+      if (fotoPerfil) {
+        const fotoUrl = getFullImageUrl(fotoPerfil);
+        // Si hay logo de escuela, usarlo como fallback en caso de error
+        const onerrorHandler = logoEscuela 
+          ? `onerror="this.onerror=null; this.src='${logoEscuela}'; this.classList.add('school-logo-placeholder');"`
+          : `onerror="this.style.display='none'; this.parentElement.innerHTML='<i class=\\'fas fa-user\\' style=\\'font-size: 28px; opacity: 0.4; color: #7EC8A3;\\'></i>';"`;
+        
+        return `<img src="${fotoUrl}" alt="${nombre}" ${onerrorHandler}>`;
+      } else if (logoEscuela) {
+        // No tiene foto, mostrar logo de escuela con baja opacidad
+        return `<img src="${logoEscuela}" alt="${nombre}" class="school-logo-placeholder">`;
+      } else {
+        // No hay foto ni logo, mostrar icono genérico
+        return `<i class="fas fa-user" style="font-size: 28px; opacity: 0.4; color: #7EC8A3;"></i>`;
+      }
+    }
     
     let datosUsuarioActual = null;
     let idUsuarioActual = null;      // Se obtiene al hacer login
@@ -778,14 +805,12 @@
         const studentNodes = companeros && companeros.length > 0 
           ? companeros.map(comp => {
               const isCurrentUser = comp.id_usuario === idUsuarioActual;
-              const avatarContent = getAvatarHtml(comp.foto_perfil, comp.nombre_completo, '', 'width: 100%; height: 100%; object-fit: cover; border-radius: 50%;');
+              const avatarContent = getTreeNodeContent(comp.foto_perfil, comp.nombre_completo);
               
               return `
                 <div class="tree-node tree-leaf" ${!isCurrentUser ? `onclick="openChatById(${comp.id_usuario}, '${comp.nombre_completo.replace(/'/g, "\\'")}')"` : ''} style="${isCurrentUser ? 'border: 3px solid #FFB347; box-shadow: 0 0 15px rgba(255,179,71,0.5);' : ''}">
                   ${avatarContent}
-                  <div style="position: absolute; bottom: -25px; left: 50%; transform: translateX(-50%); font-size: 10px; font-weight: bold; color: ${isCurrentUser ? '#FFB347' : '#7EC8A3'}; white-space: nowrap; max-width: 120px; overflow: hidden; text-overflow: ellipsis;">
-                    ${isCurrentUser ? 'Tú' : comp.nombre_completo}
-                  </div>
+                  <span class="tree-node-name ${isCurrentUser ? 'current-user' : ''}">${isCurrentUser ? 'Tú' : comp.nombre_completo.split(' ')[0]}</span>
                 </div>
               `;
             }).join('')
@@ -793,8 +818,8 @@
         
         // Renderizar maestro en la raíz del árbol
         const maestroContent = maestro 
-          ? getAvatarHtml(maestro.foto_perfil, maestro.nombre_completo, '', 'width: 100%; height: 100%; object-fit: cover; border-radius: 50%;')
-          : '<i class="fas fa-chalkboard-teacher" style="font-size: 24px; opacity: 0.5;"></i>';
+          ? getTreeNodeContent(maestro.foto_perfil, maestro.nombre_completo)
+          : '<i class="fas fa-chalkboard-teacher" style="font-size: 32px; opacity: 0.4; color: #FFB347;"></i>';
         
         return `
           <div class="tree-screen">
@@ -853,10 +878,8 @@
         }
 
         const studentNodes = estudiantes.map(estudiante => {
-          // Definir contenido del avatar
-          const avatarContent = estudiante.foto_perfil ? 
-            `<img src="${getFullImageUrl(estudiante.foto_perfil)}" alt="${estudiante.nombre_completo}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;">` :
-            '👦'; // emoji por defecto
+          // Definir contenido del avatar usando el logo de escuela como fallback
+          const avatarContent = getTreeNodeContent(estudiante.foto_perfil, estudiante.nombre_completo);
 
           // Opciones para cada estudiante
           const opciones = [
@@ -876,9 +899,7 @@
           return `
             <div class="tree-node tree-leaf" onclick="handlePersonClick('${encodeURIComponent(JSON.stringify(estudianteData))}', '${encodeURIComponent(JSON.stringify(opciones))}')">
               ${avatarContent}
-              <div style="position: absolute; bottom: -25px; left: 50%; transform: translateX(-50%); font-size: 10px; font-weight: bold; color: #7EC8A3; white-space: nowrap; max-width: 120px; overflow: hidden; text-overflow: ellipsis;">
-                ${estudiante.nombre_completo}
-              </div>
+              <span class="tree-node-name">${estudiante.nombre_completo.split(' ')[0]}</span>
             </div>
           `;
         }).join('');
@@ -890,10 +911,7 @@
             </button>
             <div class="tree-container">
               <div class="tree-node tree-teacher">
-                ${datosUsuarioActual.foto_perfil ? 
-                  `<img src="${getFullImageUrl(datosUsuarioActual.foto_perfil)}" alt="${datosUsuarioActual.nombre_completo}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;">` : 
-                  '👨‍🏫'
-                }
+                ${getTreeNodeContent(datosUsuarioActual.foto_perfil, datosUsuarioActual.nombre_completo)}
               </div>
               <div class="tree-line" style="height: 30px; top: 90px;"></div>
               <div class="tree-students">
@@ -986,17 +1004,13 @@
             asignacion: persona.asignacion || null
           };
 
-          // Mostrar foto de perfil si está disponible, sino emoji
-          const avatarContent = persona.foto_perfil ? 
-            `<img src="${getFullImageUrl(persona.foto_perfil)}" alt="${persona.nombre_completo}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;">` : 
-            emoji;
+          // Mostrar foto de perfil si está disponible, sino logo de escuela
+          const avatarContent = getTreeNodeContent(persona.foto_perfil, persona.nombre_completo);
 
           return `
             <div class="tree-node tree-leaf" onclick="handlePersonClick('${encodeURIComponent(JSON.stringify(personaData))}', '${encodeURIComponent(JSON.stringify(opciones))}')">
               ${avatarContent}
-              <div style="position: absolute; bottom: -25px; left: 50%; transform: translateX(-50%); font-size: 10px; font-weight: bold; color: #7EC8A3; white-space: nowrap; max-width: 120px; overflow: hidden; text-overflow: ellipsis;">
-                ${persona.nombre_completo}
-              </div>
+              <span class="tree-node-name">${persona.nombre_completo.split(' ')[0]}</span>
               ${persona.rol === 'admin' ? '<div style="position: absolute; top: -10px; right: -10px; background: #FFB347; color: white; border-radius: 50%; width: 20px; height: 20px; font-size: 10px; display: flex; align-items: center; justify-content: center; font-weight: bold;">D</div>' : ''}
             </div>
           `;
@@ -2019,10 +2033,8 @@
           ];
         }
         
-        // Generar el contenido del nodo (foto o emoji)
-        const nodeContent = child.foto_perfil 
-          ? `<img src="${child.foto_perfil}" alt="${child.name}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;">`
-          : child.emoji;
+        // Generar el contenido del nodo (foto o logo de escuela)
+        const nodeContent = getTreeNodeContent(child.foto_perfil, child.name);
         
         // Crear objeto completo del hijo con toda la info necesaria
         const childData = {
@@ -2034,10 +2046,13 @@
           group: child.group
         };
         
+        // Obtener solo el primer nombre para mostrar
+        const firstName = child.name.split(' ')[0];
+        
         return `
           <div class="tree-node tree-leaf" onclick='showBubbleOptions(${JSON.stringify(childData)}, ${JSON.stringify(options)})' style="animation-delay: ${index * 0.3}s;">
             ${nodeContent}
-            <div style="position: absolute; bottom: -25px; left: 50%; transform: translateX(-50%); font-size: 10px; font-weight: bold; color: #7EC8A3; white-space: nowrap;">${child.name}</div>
+            <span class="tree-node-name">${firstName}</span>
           </div>
         `;
       }).join('');
